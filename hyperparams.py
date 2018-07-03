@@ -52,6 +52,8 @@ class HyperParams:
                     "norm_advs": False,
                     "norm_batch_advs": True,
                     "use_bnorm": False,
+                    "use_gae": True,
+                    "norm_rews": False,
                     }
         self.hyps = self.read_command_line(hyp_dict)
         if arg_hyps is not None:
@@ -147,6 +149,7 @@ def hyper_search(hyps, hyp_ranges, keys, idx, trainer, search_log):
         best_avg_rew = trainer.train(hyps)
         params = [str(key)+":"+str(hyps[key]) for key in keys]
         search_log.write(", ".join(params)+" – BestRew:"+str(best_avg_rew)+"\n")
+        search_log.flush()
     else:
         key = keys[idx]
         for param in hyp_ranges[key]:
@@ -159,12 +162,16 @@ def make_hyper_range(low, high, range_len, method="log"):
         param_vals = np.random.random(low, high+1e-5, size=range_len)
     elif method.lower() == "uniform":
         step = (high-low)/(range_len-1)
-        param_vals = np.arange(low, high+1e-5, step=step)
+        pos_step = (step > 0)
+        range_high = high+(1e-5)*pos_step-(1e-5)*pos_step
+        param_vals = np.arange(low, range_high, step=step)
     else:
         range_low = np.log(low)/np.log(10)
         range_high = np.log(high)/np.log(10)
         step = (range_high-range_low)/(range_len-1)
-        arange = np.arange(range_low, range_high+1e-5, step=step)
+        arange = np.arange(range_low, range_high, step=step)
+        if len(arange) < range_len:
+            arange = np.append(arange, [range_high])
         param_vals = 10**arange
     param_vals = [float(param_val) for param_val in param_vals]
     return param_vals
