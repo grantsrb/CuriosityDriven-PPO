@@ -264,6 +264,7 @@ class Updater():
         if self.use_nstep_rets: 
             returns = advantages + vals.data.squeeze()
         else: 
+            rewards[dones==1] += self.hyps['gamma']*next_vals[dones==1] # Include bootstrap
             returns = self.discount(rewards.squeeze(), dones.squeeze(), self.gamma)
 
         return advantages, returns
