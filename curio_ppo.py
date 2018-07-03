@@ -122,75 +122,80 @@ class CurioPPO:
         past_rews = deque([0]*hyps['n_past_rews'])
         last_avg_rew = 0
         best_rew_diff = 0
-        best_avg_rew = 0
+        best_avg_rew = -100
         epoch = 0
         T = 0
-        while T < hyps['max_tsteps']:
-            basetime = time.time()
-            epoch += 1
+        try:
+            while T < hyps['max_tsteps']:
+                basetime = time.time()
+                epoch += 1
 
-            # Collect data
-            for i in range(n_rollouts):
-                stop_q.get()
-            T += shared_len
+                # Collect data
+                for i in range(n_rollouts):
+                    stop_q.get()
+                T += shared_len
 
-            # Reward Stats
-            avg_reward = reward_q.get()
-            reward_q.put(avg_reward)
-            last_avg_rew = avg_reward
-            if avg_reward > best_avg_rew:
-                best_avg_rew = avg_reward
-                updater.save_model(best_net_file, None)
+                # Reward Stats
+                avg_reward = reward_q.get()
+                reward_q.put(avg_reward)
+                last_avg_rew = avg_reward
+                if avg_reward > best_avg_rew:
+                    best_avg_rew = avg_reward
+                    updater.save_model(best_net_file, None)
 
-            # Calculate the Loss and Update nets
-            updater.update_model(shared_data)
-            net.load_state_dict(updater.net.state_dict()) # update all collector nets
-            
-            # Resume Data Collection
-            for i in range(n_rollouts):
-                gate_q.put(i)
+                # Calculate the Loss and Update nets
+                updater.update_model(shared_data)
+                net.load_state_dict(updater.net.state_dict()) # update all collector nets
+                
+                # Resume Data Collection
+                for i in range(n_rollouts):
+                    gate_q.put(i)
 
-            # Decay HyperParameters
-            if hyps['decay_eps']:
-                updater.epsilon = (1-T/(hyps['max_tsteps']))*epsilon_diff + hyps['epsilon_low']
-                print("New Eps:", updater.epsilon)
-            if hyps['decay_lr']:
-                new_lr = (1-T/(hyps['max_tsteps']))*lr_diff + hyps['lr_low']
-                updater.new_lr(new_lr)
-                print("New lr:", new_lr)
-            if hyps['decay_entr']:
-                updater.entr_coef = entr_coef_diff*(1-T/(hyps['max_tsteps']))+hyps['entr_coef_low']
-                print("New Entr:", updater.entr_coef)
-            if hyps['incr_gamma']:
-                updater.gamma = gamma_diff*(T/(hyps['max_tsteps']))+hyps['gamma']
-                print("New Gamma:", updater.gamma)
+                # Decay HyperParameters
+                if hyps['decay_eps']:
+                    updater.epsilon = (1-T/(hyps['max_tsteps']))*epsilon_diff + hyps['epsilon_low']
+                    print("New Eps:", updater.epsilon)
+                if hyps['decay_lr']:
+                    new_lr = (1-T/(hyps['max_tsteps']))*lr_diff + hyps['lr_low']
+                    updater.new_lr(new_lr)
+                    print("New lr:", new_lr)
+                if hyps['decay_entr']:
+                    updater.entr_coef = entr_coef_diff*(1-T/(hyps['max_tsteps']))+hyps['entr_coef_low']
+                    print("New Entr:", updater.entr_coef)
+                if hyps['incr_gamma']:
+                    updater.gamma = gamma_diff*(T/(hyps['max_tsteps']))+hyps['gamma']
+                    print("New Gamma:", updater.gamma)
 
-            # Periodically save model
-            if epoch % 10 == 0:
-                updater.save_model(net_save_file, optim_save_file)
+                # Periodically save model
+                if epoch % 10 == 0:
+                    updater.save_model(net_save_file, optim_save_file)
 
-            # Print Epoch Data
-            past_rews.popleft()
-            past_rews.append(avg_reward)
-            max_rew, min_rew = deque_maxmin(past_rews)
-            updater.print_statistics()
-            avg_action = shared_data['actions'].float().mean().item()
-            print("Epoch", epoch, "– T =", T)
-            print("Grad Norm:",float(updater.norm),"– Avg Action:",avg_action,"– Best AvgRew:",best_avg_rew)
-            print("Avg Rew:", avg_reward, "– High:", max_rew, "– Low:", min_rew, end='\n')
-            updater.log_statistics(log, T, avg_reward, avg_action, best_avg_rew)
-            updater.info['AvgRew'] = avg_reward
-            logger.append(updater.info, x_val=T)
+                # Print Epoch Data
+                past_rews.popleft()
+                past_rews.append(avg_reward)
+                max_rew, min_rew = deque_maxmin(past_rews)
+                updater.print_statistics()
+                avg_action = shared_data['actions'].float().mean().item()
+                print("Epoch", epoch, "– T =", T)
+                print("Grad Norm:",float(updater.norm),"– Avg Action:",avg_action,"– Best AvgRew:",best_avg_rew)
+                print("Avg Rew:", avg_reward, "– High:", max_rew, "– Low:", min_rew, end='\n')
+                updater.log_statistics(log, T, avg_reward, avg_action, best_avg_rew)
+                updater.info['AvgRew'] = avg_reward
+                logger.append(updater.info, x_val=T)
 
-            # Check for memory leaks
-            gc.collect()
-            max_mem_used = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-            print("Time:", time.time()-basetime)
-            if 'hyp_search_count' in hyps and hyps['hyp_search_count'] > 0 and hyps['search_id'] != None:
-                print("Search:", hyps['search_id'], "/", hyps['hyp_search_count'])
-            print("Memory Used: {:.2f} memory\n".format(max_mem_used / 1024))
+                # Check for memory leaks
+                gc.collect()
+                max_mem_used = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                print("Time:", time.time()-basetime)
+                if 'hyp_search_count' in hyps and hyps['hyp_search_count'] > 0 and hyps['search_id'] != None:
+                    print("Search:", hyps['search_id'], "/", hyps['hyp_search_count'])
+                print("Memory Used: {:.2f} memory\n".format(max_mem_used / 1024))
+                if updater.info["VLoss"] == float('inf') or updater.norm == float('inf'):
+                    break
+        except KeyboardInterrupt:
+            pass
 
-        logger.make_plots(hyps['exp_name'])
+        logger.make_plots(base_name)
         log.write("\nBestRew:"+str(best_avg_rew))
         log.close()
         # Close processes
