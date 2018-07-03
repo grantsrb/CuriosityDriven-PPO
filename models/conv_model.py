@@ -15,12 +15,12 @@ class ConvModel(nn.Module):
             tobj = tobj.cuda()
         return tobj
 
-    def __init__(self, input_space, output_space, emb_size=200, bnorm=False):
+    def __init__(self, input_space, output_space, h_size=200, bnorm=False):
         super(ConvModel, self).__init__()
 
         self.input_space = input_space
         self.output_space = output_space
-        self.emb_size = emb_size
+        self.h_size = h_size
         self.bnorm = bnorm
 
         self.convs = nn.ModuleList([])
@@ -65,18 +65,18 @@ class ConvModel(nn.Module):
         self.features = nn.Sequential(*self.convs)
         self.flat_size = int(np.prod(shape))
         print("Flat Features Size:", self.flat_size)
-        self.resize_emb = nn.Sequential(nn.Linear(self.flat_size, self.emb_size), nn.ReLU())
+        self.resize_emb = nn.Sequential(nn.Linear(self.flat_size, self.h_size), nn.ReLU())
 
         # Forward Dynamics
-        self.fwd_dynamics = nn.Sequential(nn.Linear(self.emb_size+1, self.emb_size), 
-                                    nn.ReLU(), nn.Linear(self.emb_size, self.emb_size), 
-                                    nn.ReLU(), nn.Linear(self.emb_size, self.emb_size)) 
+        self.fwd_dynamics = nn.Sequential(nn.Linear(self.h_size+output_space, self.h_size), 
+                                    nn.ReLU(), nn.Linear(self.h_size, self.h_size), 
+                                    nn.ReLU(), nn.Linear(self.h_size, self.h_size)) 
 
         # Policy
-        self.pi = nn.Linear(self.emb_size, self.output_space)
+        self.pi = nn.Linear(self.h_size, self.output_space)
 
         # Value
-        self.value = nn.Sequential(nn.Linear(self.emb_size, self.emb_size), nn.ReLU(), nn.Linear(self.emb_size, 1))
+        self.value = nn.Linear(self.h_size, 1)
 
     def get_new_shape(self, shape, depth, ksize, padding, stride):
         new_shape = [depth]
