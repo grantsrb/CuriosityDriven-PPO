@@ -28,6 +28,7 @@ class Updater():
         self.use_nstep_rets = hyps['use_nstep_rets']
         self.optim_type = hyps['optim_type']
         self.optim = self.new_optim(hyps['lr'])    
+        self.cache = None
 
         # Tracking variables
         self.info = {}
@@ -64,6 +65,8 @@ class Updater():
         next_states = shared_data['next_states']
         actions = shared_data['actions']
         dones = shared_data['dones']
+
+        self.update_cache(shared_data)
 
         # Make rewards
         self.net.req_grads(False)
@@ -104,7 +107,10 @@ class Updater():
 
             loss, epoch_loss, epoch_policy_loss, epoch_val_loss, epoch_entropy = 0,0,0,0,0
             epoch_dyn_loss = 0
-            indices = cuda_if(torch.randperm(len(states)).long())
+            indices = torch.randperm(len(states)).long()
+            if self.cache is not None:
+                cache_len = len(self.cache['states'])
+                cache_idxs = torch.randperm(cache_len).long()
 
             for i in range(len(indices)//hyps['batch_size']):
 
@@ -114,10 +120,21 @@ class Updater():
                 idxs = indices[startdx:endx]
                 batch_data = states[idxs],next_states[idxs],actions[idxs],advantages[idxs],returns[idxs]
 
+                # Optional forward dynamics memory replay
+                if self.cache is not None and i*hyps['cache_batch'] < cache_len:
+                    cachxs = cache_idxs[i*hyps['cache_batch']:(i+1)*hyps['cache_batch']]
+                    cache_states = self.cache['states'][cachxs]
+                    cache_next_states = self.cache['next_states'][cachxs]
+                    cache_actions = self.cache['actions'][cachxs]
+                    cache_batch = cache_states, cache_next_states, cache_actions
+                    cache_loss = hyps['cache_coef']*self.cache_losses(*cache_batch)
+                else:
+                    cache_loss = Variable(torch.zeros(1))
+
                 # Total Loss
                 policy_loss, val_loss, entropy, dyn_loss = self.ppo_losses(*batch_data)
                 ppo_term = (1-self.hyps['dyn_coef'])*(policy_loss + val_loss - entropy)
-                dynamics_term = self.hyps['dyn_coef']*dyn_loss
+                dynamics_term = self.hyps['dyn_coef']*(dyn_loss + cache_loss)
                 loss = ppo_term + dynamics_term
 
                 # Gradient Step
@@ -140,7 +157,7 @@ class Updater():
         self.info = {"Loss":float(avg_epoch_loss), 
                     "PiLoss":float(avg_epoch_policy_loss), 
                     "VLoss":float(avg_epoch_val_loss), 
-                    "S":float(avg_epoch_entropy), 
+                    "Entr":float(avg_epoch_entropy), 
                     "DynLoss":float(avg_epoch_entropy), 
                     "MaxAdv":float(self.max_adv),
                     "MinAdv":float(self.min_adv), 
@@ -151,6 +168,27 @@ class Updater():
         self.max_adv, self.min_adv, = -1, 1
         self.max_minsurr, self.min_minsurr = -1e10, 1e10
         self.max_rew, self.min_rew = -1e15, 1e15
+
+    def cache_losses(self, states, next_states, actions):
+        """
+        Creates a loss term from historical data to avoid forgetting within the forward
+        dynamics model.
+
+        states - torch FloatTensor minibatch of states with shape (batch_size, C, H, W)
+        next_states - torch FloatTensor minibatch of next states with shape (batch_size, C, H, W)
+        actions - torch LongTensor minibatch of empirical actions with shape (batch_size,)
+        """
+        
+        embs = self.net.embeddings(Variable(states))
+        embs.detach()
+        one_hot_actions = self.one_hot_encode(actions.long(), self.net.output_space)
+        fwd_inputs = torch.cat([embs.data, cuda_if(one_hot_actions)], dim=-1)
+        fwd_preds = self.net.fwd_dynamics(Variable(fwd_inputs))
+        fwd_targs = self.net.embeddings(Variable(next_states))
+        fwd_targs.detach()
+        dynamics_loss = F.mse_loss(fwd_preds, Variable(fwd_targs.data))
+        return dynamics_loss
+
 
     def ppo_losses(self, states, next_states, actions, advs, rets):
         """
@@ -304,6 +342,30 @@ class Updater():
             running_sum = array[i] + discount_factor*running_sum
             discounts[i] = running_sum
         return discounts
+
+    def update_cache(self, shared_data):
+        keys = ['actions', 'states', 'next_states']
+        if self.cache is None:
+            self.cache = dict()
+            for key in keys:
+                self.cache[key] = shared_data[key].clone()
+        else:
+            cache_size = self.hyps['cache_size']
+            if len(self.cache[keys[0]]) < cache_size:
+                for key in keys:
+                    cache = self.cache[key]
+                    new_data = shared_data[key]
+                    self.cache[key] = torch.cat([cache, new_data], dim=0)
+            else:
+                n_cache_refresh = self.hyps['n_cache_refresh']
+                for key in keys:
+                    cache = self.cache[key]
+                    new_data = shared_data[key]
+                    cache_perm = torch.randperm(len(cache)).long()
+                    cache_idxs = cache_perm[:n_cache_refresh]
+                    data_perm = torch.randperm(len(new_data)).long()
+                    data_idxs = data_perm[:n_cache_refresh]
+                    self.cache[key][cache_idxs] = new_data[data_idxs]
 
     def print_statistics(self):
         print(" – ".join([key+": "+str(round(val,5)) for key,val in sorted(self.info.items())]))
