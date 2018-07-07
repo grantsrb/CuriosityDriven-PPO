@@ -1,4 +1,4 @@
-# Recreation of _Curiosity Driven Exploration by Bootstrapping Features_
+# Loose Recreation of _Curiosity Driven Exploration by Bootstrapping Features_
 ### July 7, 2018
 
 ## Description
@@ -34,11 +34,11 @@ This data was collected using the forward dynamics model without the inverse dyn
 ### Jumping In
 You probably know how to clone a repo if you're getting into RL. But in case you don't, open a bash terminal and type the command:
 
-    $ git clone https://github.com/grantsrb/Curiosity-PPO
+    $ git clone https://github.com/grantsrb/CuriosityDriven-PPO
 
 Then navigate to the top folder using
 
-    $ cd Curiosity-PPO
+    $ cd CuriosityDriven-PPO
 
 Hopefully you have already installed all the appropriate dependencies. See the section called **Dependencies** for a list of required dependencies.
 
