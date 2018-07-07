@@ -7,8 +7,7 @@ if __name__ == "__main__":
     ppo_trainer = CurioPPO()
     hyps = dict()
     hyp_ranges = {
-                #"fwd_lr": make_hyper_range(.000001, .0001, 3, 'log'),
-                "fwd_lr": [.00001, .000001]
+                "fwd_lr": make_hyper_range(.000001, .00001, 2, 'log'),
                 }
     keys = list(hyp_ranges.keys())
     hyps['lr'] = .0001
@@ -20,6 +19,7 @@ if __name__ == "__main__":
     hyps['gamma'] = .99
     hyps['entr_coef'] = .008
     hyps['dyn_coef'] = .5
+    hyps['cache_coef'] = .5
     hyps['env_type'] = "Breakout-v0"
     hyps['exp_name'] = "3fwdlr"
     hyps['use_gae'] = True
