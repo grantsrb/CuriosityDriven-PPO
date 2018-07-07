@@ -3,4 +3,4 @@ __pycache__/
 *.txt
 filedump/
 *.sh
-*.png
+saved_data/
