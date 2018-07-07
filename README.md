@@ -1,5 +1,5 @@
 # Recreation of _Curiosity Driven Exploration by Bootstrapping Features_
-### June 23, 2018
+### July 7, 2018
 
 ## Description
 This repo is a loose recreation of OpenAI's paper [Curiosity Driven Exploration by Bootstrapping Features](https://openreview.net/forum?id=H1RPJf5Tz). 
