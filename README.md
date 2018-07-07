@@ -9,7 +9,6 @@ The algorithm trains a policy to play games purely off of reward generated from 
 ## Implementation Notes
 - This implementation does not include Hindsight Experience Replay
 - This implementation normalizes the intrinsic rewards before using Generalized Advantage Estimation (GAE) in the PPO updates. This helps prevent divergence in the loss due to value prediction error. I do not believe the OpenAI version does this, but I could not get the algorithm to work without the intrinsic reward normalization.
-- This implementation does not currently include an inverse dynamics model.
 
 ## Performance
 The algorithm was trained on OpenAI's gym Breakout-v0. The reward graphs are of the moving average reward collected at the end of each game episode using a moving average factor of 0.99.
