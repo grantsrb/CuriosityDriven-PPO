@@ -43,6 +43,12 @@ class CurioPPO:
         best_net_file = base_name+"_best.p"
         optim_save_file = base_name+"_optim.p"
         fwd_optim_file = base_name+"_fwdoptim.p"
+        if hyps['inv_model'] is not None:
+            inv_save_file = base_name+"_invnet.p"
+            inv_optim_file = base_name+"_invoptim.p"
+        else:
+            inv_save_file = None
+            inv_optim_file = None
         log_file = base_name+"_log.txt"
         if hyps['resume']: log = open(log_file, 'a')
         else: log = open(log_file, 'w')
@@ -65,6 +71,7 @@ class CurioPPO:
         print("Prep Shape:,",prepped.shape)
         print("State Shape:,",hyps['state_shape'])
         print("Num Samples Per Update:", shared_len)
+        assert hyps['n_cache_refresh'] <= shared_len or hyps['cache_size'] == 0
         print("Samples Wasted in Update:", shared_len % hyps['batch_size'])
         del env
 
@@ -86,9 +93,17 @@ class CurioPPO:
             runners.append(runner)
 
         # Make Network
-        net = hyps['model'](hyps['state_shape'], action_size, bnorm=hyps['use_bnorm'])
+        h_size = hyps['h_size']
+        net = hyps['model'](hyps['state_shape'], action_size, h_size, bnorm=hyps['use_bnorm'])
+        if hyps['inv_model'] is not None:
+            inv_net = hyps['inv_model'](h_size, action_size)
+            inv_net = cuda_if(inv_net)
+        else:
+            inv_net = None
         if hyps['resume']:
             net.load_state_dict(torch.load(net_save_file))
+            if inv_net is not None:
+                inv_net.load_state_dict(torch.load(inv_save_file))
         base_net = copy.deepcopy(net)
         net = cuda_if(net)
         net.share_memory()
@@ -106,10 +121,12 @@ class CurioPPO:
             gate_q.put(i)
 
         # Make Updater
-        updater = Updater(base_net, hyps)
+        updater = Updater(base_net, hyps, inv_net)
         if hyps['resume']:
             updater.optim.load_state_dict(torch.load(optim_save_file))
             updater.fwd_optim.load_state_dict(torch.load(fwd_optim_file))
+            if inv_net is not None:
+                updater.inv_optim.load_state_dict(torch.load(inv_optim_file))
         updater.optim.zero_grad()
         updater.net.train(mode=True)
         updater.net.req_grads(True)
@@ -170,7 +187,7 @@ class CurioPPO:
 
                 # Periodically save model
                 if epoch % 10 == 0:
-                    updater.save_model(net_save_file, optim_save_file, fwd_optim_file)
+                    updater.save_model(net_save_file, optim_save_file, fwd_optim_file, inv_save_file, inv_optim_file)
 
                 # Print Epoch Data
                 past_rews.popleft()

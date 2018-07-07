@@ -19,10 +19,11 @@ class Updater():
     calc_gradients followed by update_model. If the size of the epoch is restricted by the memory, you can call calc_gradients to clear the graph.
     """
 
-    def __init__(self, net, hyps): 
+    def __init__(self, net, hyps, inv_net=None): 
         self.net = net 
         self.old_net = copy.deepcopy(self.net) 
         self.hyps = hyps
+        self.inv_net = inv_net
         self.gamma = hyps['gamma']
         self.lambda_ = hyps['lambda_']
         self.use_nstep_rets = hyps['use_nstep_rets']
@@ -30,6 +31,10 @@ class Updater():
         self.optim = self.new_optim(net.parameters(), hyps['lr'], optim_type)
         optim_type = hyps['fwd_optim_type']
         self.fwd_optim = self.new_optim(net.fwd_dynamics.parameters(), hyps['fwd_lr'], optim_type)
+        if inv_net is not None:
+            optim_type = hyps['inv_optim_type']
+            self.inv_params = list(inv_net.parameters()) + list(net.parameters())
+            self.inv_optim = self.new_optim(self.inv_params, hyps['inv_lr'], optim_type)
         self.cache = None
 
         # Tracking variables
@@ -101,7 +106,8 @@ class Updater():
             advantages = (advantages - advantages.mean())/(advantages.std()+1e-6)
 
         avg_epoch_loss,avg_epoch_policy_loss,avg_epoch_val_loss,avg_epoch_entropy = 0,0,0,0
-        avg_epoch_dyn_loss = 0
+        avg_epoch_fwd_loss = 0
+        avg_epoch_inv_loss = 0
         self.net.train(mode=True)
         self.net.req_grads(True)
         self.old_net.load_state_dict(self.net.state_dict())
@@ -111,7 +117,8 @@ class Updater():
         for epoch in range(hyps['n_epochs']):
 
             loss, epoch_loss, epoch_policy_loss, epoch_val_loss, epoch_entropy = 0,0,0,0,0
-            epoch_dyn_loss = 0
+            epoch_fwd_loss = 0
+            epoch_inv_loss = 0
             indices = torch.randperm(len(states)).long()
             if self.cache is not None:
                 cache_len = len(self.cache['states'])
@@ -132,18 +139,21 @@ class Updater():
                     cache_next_states = self.cache['next_states'][cachxs]
                     cache_actions = self.cache['actions'][cachxs]
                     cache_batch = cache_states, cache_next_states, cache_actions
-                    cache_loss = hyps['cache_coef']*self.cache_losses(*cache_batch)
+                    fwd_cache_loss, inv_cache_loss = self.cache_losses(*cache_batch)
+                    fwd_cache_loss = hyps['cache_coef']*fwd_cache_loss
                 else:
-                    cache_loss = Variable(torch.zeros(1))
+                    fwd_cache_loss = Variable(torch.zeros(1))
+                    inv_cache_loss = Variable(torch.zeros(1))
 
                 # Total Loss
-                policy_loss, val_loss, entropy, dyn_loss = self.ppo_losses(*batch_data)
-                ppo_term = (1-self.hyps['dyn_coef'])*(policy_loss + val_loss - entropy)
-                dynamics_term = self.hyps['dyn_coef']*(dyn_loss + cache_loss)
-                loss = ppo_term + dynamics_term
+                policy_loss, val_loss, entropy, fwd_loss, inv_loss = self.ppo_losses(*batch_data)
+                ppo_term = (1-hyps['fwd_coef'])*(policy_loss + val_loss - entropy)
+                fwd_term = hyps['fwd_coef']*(fwd_loss + fwd_cache_loss)
+                loss = ppo_term + fwd_term
 
                 # Gradient Step
-                loss.backward()
+                use_idf = self.inv_net is not None
+                loss.backward(retain_graph=use_idf)
                 self.norm = nn.utils.clip_grad_norm_(self.net.parameters(), hyps['max_norm'])
 
                 # Important to do fwd optim step first! This is because the fwd parameters are
@@ -152,23 +162,32 @@ class Updater():
                 self.fwd_optim.zero_grad()
                 self.optim.step()
                 self.optim.zero_grad()
+                if use_idf:
+                    inv_loss = (1-hyps['inv_coef'])*inv_cache_loss + hyps['inv_coef']*inv_loss
+                    inv_loss.backward()
+                    _ = nn.utils.clip_grad_norm_(self.inv_params, hyps['max_norm'])
+                    self.inv_optim.step()
+                    self.inv_optim.zero_grad()
                 epoch_loss += float(loss.data)
                 epoch_policy_loss += float(policy_loss.data)
                 epoch_val_loss += float(val_loss.data)
-                epoch_dyn_loss += float(dyn_loss.data)
+                epoch_fwd_loss += float(fwd_loss.data)
+                epoch_inv_loss += float(inv_loss.data)
                 epoch_entropy += float(entropy.data)
 
             avg_epoch_loss += epoch_loss/hyps['n_epochs']
             avg_epoch_policy_loss += epoch_policy_loss/hyps['n_epochs']
             avg_epoch_val_loss += epoch_val_loss/hyps['n_epochs']
             avg_epoch_entropy += epoch_entropy/hyps['n_epochs']
-            avg_epoch_dyn_loss += epoch_dyn_loss/hyps['n_epochs']
+            avg_epoch_fwd_loss += epoch_fwd_loss/hyps['n_epochs']
+            avg_epoch_inv_loss += epoch_inv_loss/hyps['n_epochs']
 
         self.info = {"Loss":float(avg_epoch_loss), 
                     "PiLoss":float(avg_epoch_policy_loss), 
                     "VLoss":float(avg_epoch_val_loss), 
                     "Entr":float(avg_epoch_entropy), 
-                    "DynLoss":float(avg_epoch_entropy), 
+                    "FwdLoss":float(avg_epoch_entropy), 
+                    "InvLoss":float(avg_epoch_entropy), 
                     "MaxAdv":float(self.max_adv),
                     "MinAdv":float(self.min_adv), 
                     "MinSurr":float(self.min_minsurr), 
@@ -190,14 +209,19 @@ class Updater():
         """
         
         embs = self.net.embeddings(Variable(states))
-        embs.detach()
-        one_hot_actions = self.one_hot_encode(actions.long(), self.net.output_space)
+        fwd_targs = self.net.embeddings(Variable(next_states))
+        if self.inv_net is not None:
+            inv_preds = self.inv_net(torch.cat([embs, fwd_targs], dim=-1))
+            inv_loss = F.cross_entropy(inv_preds, Variable(cuda_if(actions)))
+        else:
+            inv_loss = Variable(cuda_if(torch.zeros(1)))
+            embs.detach()
+            fwd_targs.detach()
+        one_hot_actions = self.one_hot_encode(actions, self.net.output_space)
         fwd_inputs = torch.cat([embs.data, cuda_if(one_hot_actions)], dim=-1)
         fwd_preds = self.net.fwd_dynamics(Variable(fwd_inputs))
-        fwd_targs = self.net.embeddings(Variable(next_states))
-        fwd_targs.detach()
-        dynamics_loss = F.mse_loss(fwd_preds, Variable(fwd_targs.data))
-        return dynamics_loss
+        fwd_loss = F.mse_loss(fwd_preds, Variable(fwd_targs.data))
+        return fwd_loss, inv_loss
 
 
     def ppo_losses(self, states, next_states, actions, advs, rets):
@@ -214,7 +238,7 @@ class Updater():
             policy_loss - the PPO CLIP policy gradient shape (1,)
             val_loss - the critic loss shape (1,)
             entropy - the entropy of the action predictions shape (1,)
-            dynamics_loss 
+            fwd_loss 
         """
         hyps = self.hyps
 
@@ -263,14 +287,22 @@ class Updater():
         entropy_step = torch.sum(softlogs*probs, dim=-1)
         entropy = -hyps['entr_coef'] * torch.mean(entropy_step)
 
-        # Dynamics Loss
+        # Fwd Dynamics Loss
         one_hot_actions = self.one_hot_encode(actions, self.net.output_space)
         fwd_inputs = torch.cat([embs.data, cuda_if(one_hot_actions)], dim=-1)
         fwd_preds = self.net.fwd_dynamics(Variable(fwd_inputs))
-        fwd_targs = self.net.embeddings(Variable(next_states)).data
-        dynamics_loss = F.mse_loss(fwd_preds, Variable(fwd_targs))
+        next_embs = self.net.embeddings(Variable(next_states))
+        fwd_loss = F.mse_loss(fwd_preds, Variable(next_embs.data))
 
-        return policy_loss, val_loss, entropy, dynamics_loss
+        # Inv Dynamics Loss
+        if self.inv_net is not None:
+            inv_inputs = torch.cat([embs, next_embs], dim=-1) # Backprop into embeddings
+            inv_preds = self.inv_net(inv_inputs)
+            inv_loss = F.cross_entropy(inv_preds, Variable(cuda_if(actions)))
+        else:
+            inv_loss = Variable(cuda_if(torch.zeros(1)))
+
+        return policy_loss, val_loss, entropy, fwd_loss, inv_loss
 
     def one_hot_encode(self, idxs, width):
         """
@@ -312,6 +344,9 @@ class Updater():
         if self.use_nstep_rets: 
             returns = advantages + vals.data.squeeze()
         else: 
+            print("dones:", (dones==1).shape)
+            print("rews:", rewards[dones==1].shape)
+            print("nextws:", next_vals[dones==1].shape)
             rewards[dones==1] += self.hyps['gamma']*next_vals[dones==1] # Include bootstrap
             returns = self.discount(rewards.squeeze(), dones.squeeze(), self.gamma)
 
@@ -355,7 +390,7 @@ class Updater():
 
     def update_cache(self, shared_data):
         keys = ['actions', 'states', 'next_states']
-        if self.cache is None:
+        if self.cache is None and self.hyps['cache_size'] > 0:
             self.cache = dict()
             for key in keys:
                 self.cache[key] = shared_data[key].clone()
@@ -384,7 +419,7 @@ class Updater():
         log.write("Step:"+str(T)+" – "+" – ".join([key+": "+str(round(val,5)) if "ntropy" not in key else key+": "+str(val) for key,val in self.info.items()]+["EpRew: "+str(reward), "AvgAction: "+str(avg_action), "BestRew:"+str(best_avg_rew)]) + '\n')
         log.flush()
 
-    def save_model(self, net_file_name, optim_file, fwd_optim_file):
+    def save_model(self, net_file_name, optim_file, fwd_optim_file, inv_save_file=None, inv_optim_file=None):
         """
         Saves the state dict of the model to file.
 
@@ -394,6 +429,9 @@ class Updater():
         if optim_file is not None:
             torch.save(self.optim.state_dict(), optim_file)
             torch.save(self.fwd_optim.state_dict(), fwd_optim_file)
+            if inv_save_file is not None and self.inv_net is not None:
+                torch.save(self.inv_net.state_dict(), inv_save_file)
+                torch.save(self.inv_optim.state_dict(), inv_optim_file)
     
     def new_lr(self, new_lr):
         optim_type = self.hyps['optim_type']

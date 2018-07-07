@@ -1,6 +1,6 @@
 import sys
 import preprocessing
-from models import ConvModel, FCModel, A3CModel
+from models import ConvModel, FCModel, A3CModel, InvDynamics
 import numpy as np
 
 class HyperParams:
@@ -13,10 +13,13 @@ class HyperParams:
                     "env_type":"Breakout-v0", 
                     "optim_type":'rmsprop', # Options: rmsprop, adam
                     "fwd_optim_type":'adam', # Options: rmsprop, adam
+                    "inv_optim_type":'adam', # Options: rmsprop, adam
                     }
+
         hyp_dict['int_hyps'] = {
                     "n_epochs": 3, # PPO update epoch count
                     "batch_size": 256, # PPO update batch size
+                    "h_size": 200,
                     "cache_batch": 256, # Batch size for cached data in forward dynamics loss
                     "max_tsteps": int(50e6),
                     "n_tsteps": 128, # Maximum number of tsteps per rollout per perturbed copy
@@ -25,13 +28,15 @@ class HyperParams:
                     "n_rollouts": 12,
                     "n_past_rews":25,
                     "cache_size":2000,
-                    "n_cache_refresh":400,
+                    "n_cache_refresh":200,
                     "grid_size": 15,
                     "unit_size": 4,
                     "n_foods": 2,
                     }
+
         hyp_dict['float_hyps'] = {
                     "fwd_lr":0.00001,
+                    "inv_lr":0.0001,
                     "lr":0.0001,
                     "lr_low": float(1e-12),
                     "lambda_":.95,
@@ -43,9 +48,11 @@ class HyperParams:
                     "max_norm":.5,
                     "epsilon": .15, # PPO update clipping constant
                     "epsilon_low":.05,
-                    "dyn_coef":.5,
+                    "fwd_coef":.5,
+                    "inv_coef":.5,
                     'cache_coef': .5,
                     }
+
         hyp_dict['bool_hyps'] = {
                     "resume":False,
                     "render": False, # Do not use in training scheme
@@ -60,6 +67,7 @@ class HyperParams:
                     "use_bnorm": False,
                     "use_gae": True,
                     "norm_rews": True,
+                    "use_idf": False, # IDF stands for Inverse Dynamics Features
                     }
         self.hyps = self.read_command_line(hyp_dict)
         if arg_hyps is not None:
@@ -81,6 +89,11 @@ class HyperParams:
             self.hyps['model'] = FCModel
         else:
             self.hyps['model'] = ConvModel
+
+        if self.hyps['use_idf']:
+            self.hyps['inv_model'] = InvDynamics
+        else:
+            self.hyps['inv_model'] = None
 
         # Preprocessor Type
         env_type = self.hyps['env_type'].lower()

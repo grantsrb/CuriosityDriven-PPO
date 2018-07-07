@@ -6,8 +6,10 @@ class InvDynamics(nn.Module):
         self.h_size = h_size
         self.action_size = action_size
 
-        self.forward = nn.Sequential(nn.Linear(2*h_size, h_size), nn.ReLU(),
+        self.inv_dyn = nn.Sequential(nn.Linear(2*h_size, h_size), nn.ReLU(),
                                     nn.Linear(h_size, h_size), nn.ReLU(),
                                     nn.Linear(h_size, action_size))
 
+    def forward(self, x):
+        return self.inv_dyn(x)
 
