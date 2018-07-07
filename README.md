@@ -21,11 +21,6 @@ This data was collected using the forward dynamics model without the inverse dyn
 
 ------------------
 
-![with inv dynamics avg rew](./figures/inv_AvgRew.png)
-
-This data was collected using the inverse dynamics model to train the embedding network within the policy. 
-
-------------------
 
 ## Dependencies
 - python 3.5 or later
