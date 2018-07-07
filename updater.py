@@ -26,8 +26,10 @@ class Updater():
         self.gamma = hyps['gamma']
         self.lambda_ = hyps['lambda_']
         self.use_nstep_rets = hyps['use_nstep_rets']
-        self.optim_type = hyps['optim_type']
-        self.optim = self.new_optim(hyps['lr'])    
+        optim_type = hyps['optim_type']
+        self.optim = self.new_optim(net.parameters(), hyps['lr'], optim_type)
+        optim_type = hyps['fwd_optim_type']
+        self.fwd_optim = self.new_optim(net.fwd_dynamics.parameters(), hyps['fwd_lr'], optim_type)
         self.cache = None
 
         # Tracking variables
@@ -79,6 +81,8 @@ class Updater():
         del embs
         rewards = F.mse_loss(fwd_preds, targets, size_average=False, reduce=False)
         rewards = rewards.view(len(fwd_preds),-1).mean(-1).data
+        # Bootstrapped value predictions are added within the make_advs_and_rets fxn
+        # in the case of using the discounted rewards for the returns
         del targets
         del fwd_preds
         if hyps['norm_rews']:
@@ -89,6 +93,7 @@ class Updater():
         if hyps['use_gae']:
             advantages, returns = self.make_advs_and_rets(states,next_states,rewards,dones)
         else:
+            # No bootstrapped values added when using this option
             advantages = self.discount(rewards, dones, hyps['gamma'])
             returns = advantages
 
@@ -140,6 +145,11 @@ class Updater():
                 # Gradient Step
                 loss.backward()
                 self.norm = nn.utils.clip_grad_norm_(self.net.parameters(), hyps['max_norm'])
+
+                # Important to do fwd optim step first! This is because the fwd parameters are
+                # in the regular optimizer as well
+                self.fwd_optim.step()
+                self.fwd_optim.zero_grad()
                 self.optim.step()
                 self.optim.zero_grad()
                 epoch_loss += float(loss.data)
@@ -242,9 +252,9 @@ class Updater():
                 clipped_vals = old_vals + torch.clamp(vals-old_vals, -hyps['epsilon'], hyps['epsilon'])
                 v1 = .5*(vals.squeeze()-rets)**2
                 v2 = .5*(clipped_vals.squeeze()-rets)**2
-                val_loss = hyps['val_const'] * torch.max(v1,v2).mean()
+                val_loss = hyps['val_coef'] * torch.max(v1,v2).mean()
             else:
-                val_loss = hyps['val_const'] * F.mse_loss(vals.squeeze(), rets)
+                val_loss = hyps['val_coef'] * F.mse_loss(vals.squeeze(), rets)
         else:
             val_loss = Variable(cuda_if(torch.zeros(1)))
 
@@ -374,26 +384,34 @@ class Updater():
         log.write("Step:"+str(T)+" – "+" – ".join([key+": "+str(round(val,5)) if "ntropy" not in key else key+": "+str(val) for key,val in self.info.items()]+["EpRew: "+str(reward), "AvgAction: "+str(avg_action), "BestRew:"+str(best_avg_rew)]) + '\n')
         log.flush()
 
-    def save_model(self, net_file_name, optim_file_name):
+    def save_model(self, net_file_name, optim_file, fwd_optim_file):
         """
         Saves the state dict of the model to file.
 
         file_name - string name of the file to save the state_dict to
         """
         torch.save(self.net.state_dict(), net_file_name)
-        if optim_file_name is not None:
-            torch.save(self.optim.state_dict(), optim_file_name)
+        if optim_file is not None:
+            torch.save(self.optim.state_dict(), optim_file)
+            torch.save(self.fwd_optim.state_dict(), fwd_optim_file)
     
     def new_lr(self, new_lr):
-        new_optim = self.new_optim(new_lr)
+        optim_type = self.hyps['optim_type']
+        new_optim = self.new_optim(self.net.parameters(), new_lr, optim_type)
         new_optim.load_state_dict(self.optim.state_dict())
         self.optim = new_optim
 
-    def new_optim(self, lr):
-        if self.optim_type == 'rmsprop':
-            new_optim = optim.RMSprop(self.net.parameters(), lr=lr) 
-        elif self.optim_type == 'adam':
-            new_optim = optim.Adam(self.net.parameters(), lr=lr) 
+    def new_fwd_lr(self, new_lr):
+        optim_type = self.hyps['fwd_optim_type']
+        new_optim = self.new_optim(self.net.fwd_dynamics.parameters(), new_lr, optim_type)
+        new_optim.load_state_dict(self.optim.state_dict())
+        self.fwd_optim = new_optim
+
+    def new_optim(self, params, lr, optim_type):
+        if optim_type == 'rmsprop':
+            new_optim = optim.RMSprop(params, lr=lr) 
+        elif optim_type == 'adam':
+            new_optim = optim.Adam(params, lr=lr) 
         else:
-            new_optim = optim.RMSprop(self.net.parameters(), lr=lr) 
+            new_optim = optim.RMSprop(params, lr=lr) 
         return new_optim

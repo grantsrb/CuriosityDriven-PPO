@@ -42,6 +42,7 @@ class CurioPPO:
         net_save_file = base_name+"_net.p"
         best_net_file = base_name+"_best.p"
         optim_save_file = base_name+"_optim.p"
+        fwd_optim_file = base_name+"_fwdoptim.p"
         log_file = base_name+"_log.txt"
         if hyps['resume']: log = open(log_file, 'a')
         else: log = open(log_file, 'w')
@@ -108,6 +109,7 @@ class CurioPPO:
         updater = Updater(base_net, hyps)
         if hyps['resume']:
             updater.optim.load_state_dict(torch.load(optim_save_file))
+            updater.fwd_optim.load_state_dict(torch.load(fwd_optim_file))
         updater.optim.zero_grad()
         updater.net.train(mode=True)
         updater.net.req_grads(True)
@@ -141,7 +143,7 @@ class CurioPPO:
                 last_avg_rew = avg_reward
                 if avg_reward > best_avg_rew:
                     best_avg_rew = avg_reward
-                    updater.save_model(best_net_file, None)
+                    updater.save_model(best_net_file, None, None)
 
                 # Calculate the Loss and Update nets
                 updater.update_model(shared_data)
@@ -168,7 +170,7 @@ class CurioPPO:
 
                 # Periodically save model
                 if epoch % 10 == 0:
-                    updater.save_model(net_save_file, optim_save_file)
+                    updater.save_model(net_save_file, optim_save_file, fwd_optim_file)
 
                 # Print Epoch Data
                 past_rews.popleft()

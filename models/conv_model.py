@@ -35,13 +35,6 @@ class ConvModel(nn.Module):
         shape = self.get_new_shape(shape, out_depth, ksize, padding=padding, stride=stride)
 
         ksize=3; stride=2; padding=1; in_depth=out_depth
-        out_depth=24
-        self.convs.append(self.conv_block(in_depth,out_depth,ksize=ksize,
-                                            stride=stride, padding=padding, 
-                                            bnorm=self.bnorm))
-        shape = self.get_new_shape(shape, out_depth, ksize, padding=padding, stride=stride)
-
-        ksize=3; stride=2; padding=1; in_depth=out_depth
         out_depth=32
         self.convs.append(self.conv_block(in_depth,out_depth,ksize=ksize,
                                             stride=stride, padding=padding, 
@@ -65,17 +58,16 @@ class ConvModel(nn.Module):
         self.features = nn.Sequential(*self.convs)
         self.flat_size = int(np.prod(shape))
         print("Flat Features Size:", self.flat_size)
-        self.resize_emb = nn.Sequential(nn.Linear(self.flat_size, self.h_size), nn.ReLU())
+        self.resize_emb = nn.Linear(self.flat_size, self.h_size)
 
-        # Forward Dynamics
-        self.fwd_dynamics = nn.Sequential(nn.Linear(self.h_size+output_space, self.h_size), 
+        # Fwd Dynamics
+        self.fwd_dynamics = nn.Sequential(nn.ReLU(), nn.Linear(self.h_size+output_space, self.h_size), 
                                     nn.ReLU(), nn.Linear(self.h_size, self.h_size), 
                                     nn.ReLU(), nn.Linear(self.h_size, self.h_size)) 
 
         # Policy
+        self.pre_valpi = nn.Sequential(nn.ReLU(), nn.Linear(self.h_size, self.h_size), nn.ReLU())
         self.pi = nn.Linear(self.h_size, self.output_space)
-
-        # Value
         self.value = nn.Linear(self.h_size, 1)
 
     def get_new_shape(self, shape, depth, ksize, padding, stride):
@@ -111,6 +103,7 @@ class ConvModel(nn.Module):
         """
         if self.bnorm:
             state_emb = self.emb_bnorm(state_emb)
+        state_emb = self.pre_valpi(state_emb)
         pi = self.pi(state_emb)
         value = self.value(state_emb)
         return value, pi
