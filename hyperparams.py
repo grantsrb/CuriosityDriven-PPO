@@ -12,8 +12,8 @@ class HyperParams:
                     "model_type":"conv", # Options include 'dense', 'conv', 'a3c'
                     "env_type":"Breakout-v0", 
                     "optim_type":'rmsprop', # Options: rmsprop, adam
-                    "fwd_optim_type":'adam', # Options: rmsprop, adam
-                    "inv_optim_type":'adam', # Options: rmsprop, adam
+                    "fwd_optim_type":'rmsprop', # Options: rmsprop, adam
+                    "inv_optim_type":'rmsprop', # Options: rmsprop, adam
                     }
 
         hyp_dict['int_hyps'] = {
@@ -46,11 +46,11 @@ class HyperParams:
                     "entr_coef":.008,
                     "entr_coef_low":.001,
                     "max_norm":.5,
-                    "epsilon": .15, # PPO update clipping constant
+                    "epsilon": .2, # PPO update clipping constant
                     "epsilon_low":.05,
-                    "fwd_coef":.5,
-                    "inv_coef":.5,
-                    'cache_coef': .5,
+                    "fwd_coef":.5,# Scaling factor for fwd dynamics portion of loss. range: 0-1
+                    "inv_coef":.5, # Scaling factor for inverse dynamics portion of loss. range: 0-1
+                    'cache_coef': .5, # Portion of inverse and forward dynamics losses from cached data. range: 0-1
                     }
 
         hyp_dict['bool_hyps'] = {

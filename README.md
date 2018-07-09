@@ -103,9 +103,9 @@ See `hyperparams.py` to access the default values.
 * `max_norm` - denotes the maximum gradient norm for gradient norm clipping
 * `epsilon` -  PPO update clipping constant
 * `epsilon_low` - if `decay_eps` is set to true, this value denotes the lower limit of the `epsilon` decay.
-* `fwd_coef` - float value determining the weight of the forward dynamics loss to the PPO loss.
-* `inv_coef` - float value determining the weight of the inverse dynamics loss to the inverse dynamics loss from the cached data.
-* `cache_coef` - float value determining the weight of the updates from the cache in the forward dynamics loss.
+* `fwd_coef` - float value between 0 and 1 determining the weight of the forward dynamics loss to the PPO loss.
+* `inv_coef` - float value between 0 and 1 scaling the inverse dynamics loss within the loss term.
+* `cache_coef` - float value determining the weight of the updates from the cache in the dynamics losses.
 
 ##### Boolean Hyperparameters
 * `resume` - boolean denoting whether the training should be resumed from a previous point.

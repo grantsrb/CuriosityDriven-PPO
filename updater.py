@@ -33,8 +33,7 @@ class Updater():
         self.fwd_optim = self.new_optim(net.fwd_dynamics.parameters(), hyps['fwd_lr'], optim_type)
         if inv_net is not None:
             optim_type = hyps['inv_optim_type']
-            self.inv_params = list(inv_net.parameters()) + list(net.parameters())
-            self.inv_optim = self.new_optim(self.inv_params, hyps['inv_lr'], optim_type)
+            self.inv_optim = self.new_optim(self.inv_net.parameters(), hyps['inv_lr'], optim_type)
         self.cache = None
 
         # Tracking variables
@@ -140,20 +139,25 @@ class Updater():
                     cache_actions = self.cache['actions'][cachxs]
                     cache_batch = cache_states, cache_next_states, cache_actions
                     fwd_cache_loss, inv_cache_loss = self.cache_losses(*cache_batch)
-                    fwd_cache_loss = hyps['cache_coef']*fwd_cache_loss
                 else:
                     fwd_cache_loss = Variable(torch.zeros(1))
                     inv_cache_loss = Variable(torch.zeros(1))
 
                 # Total Loss
                 policy_loss, val_loss, entropy, fwd_loss, inv_loss = self.ppo_losses(*batch_data)
-                ppo_term = (1-hyps['fwd_coef'])*(policy_loss + val_loss - entropy)
-                fwd_term = hyps['fwd_coef']*(fwd_loss + fwd_cache_loss)
+                inv_term = hyps['cache_coef']*inv_cache_loss + (1-hyps['cache_coef'])*inv_loss
+                inv_term *= hyps['inv_coef']
+                ppo_term = (1-hyps['fwd_coef'])*(policy_loss + val_loss - entropy + inv_term)
+                fwd_term = hyps['cache_coef']*fwd_cache_loss + (1-hyps['cache_coef'])*fwd_loss
+                fwd_term = hyps['fwd_coef']*fwd_term
+                #loss = ppo_term + fwd_term + inv_loss
                 loss = ppo_term + fwd_term
 
                 # Gradient Step
-                use_idf = self.inv_net is not None
-                loss.backward(retain_graph=use_idf)
+                #use_idf = self.inv_net is not None
+                #loss.backward(retain_graph=use_idf)
+                loss.backward()
+                _ = nn.utils.clip_grad_norm_(self.inv_net.parameters(), hyps['max_norm'])
                 self.norm = nn.utils.clip_grad_norm_(self.net.parameters(), hyps['max_norm'])
 
                 # Important to do fwd optim step first! This is because the fwd parameters are
@@ -162,18 +166,20 @@ class Updater():
                 self.fwd_optim.zero_grad()
                 self.optim.step()
                 self.optim.zero_grad()
-                if use_idf:
-                    inv_loss = (1-hyps['inv_coef'])*inv_cache_loss + hyps['inv_coef']*inv_loss
-                    inv_loss.backward()
-                    _ = nn.utils.clip_grad_norm_(self.inv_params, hyps['max_norm'])
-                    self.inv_optim.step()
-                    self.inv_optim.zero_grad()
-                epoch_loss += float(loss.data)
-                epoch_policy_loss += float(policy_loss.data)
-                epoch_val_loss += float(val_loss.data)
-                epoch_fwd_loss += float(fwd_loss.data)
-                epoch_inv_loss += float(inv_loss.data)
-                epoch_entropy += float(entropy.data)
+                self.inv_optim.step()
+                self.inv_optim.zero_grad()
+                #if use_idf:
+                #    inv_term = (1-hyps['inv_coef'])*inv_cache_loss + hyps['inv_coef']*inv_loss
+                #    inv_term.backward()
+                #    _ = nn.utils.clip_grad_norm_(self.inv_net.parameters(), hyps['max_norm'])
+                #    self.inv_optim.step()
+                #    self.inv_optim.zero_grad()
+                epoch_loss += float(loss.item())
+                epoch_policy_loss += policy_loss.item()
+                epoch_val_loss += val_loss.item()
+                epoch_fwd_loss += fwd_term.item()
+                epoch_inv_loss += inv_term.item()
+                epoch_entropy += entropy.item()
 
             avg_epoch_loss += epoch_loss/hyps['n_epochs']
             avg_epoch_policy_loss += epoch_policy_loss/hyps['n_epochs']
@@ -186,8 +192,8 @@ class Updater():
                     "PiLoss":float(avg_epoch_policy_loss), 
                     "VLoss":float(avg_epoch_val_loss), 
                     "Entr":float(avg_epoch_entropy), 
-                    "FwdLoss":float(avg_epoch_entropy), 
-                    "InvLoss":float(avg_epoch_entropy), 
+                    "FwdLoss":float(avg_epoch_fwd_loss), 
+                    "InvLoss":float(avg_epoch_inv_loss), 
                     "MaxAdv":float(self.max_adv),
                     "MinAdv":float(self.min_adv), 
                     "MinSurr":float(self.min_minsurr), 

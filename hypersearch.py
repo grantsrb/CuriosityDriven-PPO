@@ -7,8 +7,8 @@ if __name__ == "__main__":
     ppo_trainer = CurioPPO()
     hyps = dict()
     hyp_ranges = {
-                "inv_lr": [1e-4, 1e-5, 1e-6],
-                "fwd_lr": [1e-4, 1e-5],
+                'inv_lr': [1e-5, 1e-6],
+                'fwd_lr': [5e-5, 1e-5, 1e-6],
                 }
     keys = list(hyp_ranges.keys())
     hyps['use_idf'] = True
@@ -19,19 +19,20 @@ if __name__ == "__main__":
     hyps['clip_vals'] = False
     hyps['lambda_'] = .95
     hyps['gamma'] = .99
-    hyps['entr_coef'] = .008
+    hyps['entr_coef'] = .004
     hyps['dyn_coef'] = .5
-    hyps['cache_coef'] = .5
+    hyps['inv_coef'] = .5 # Portion due to cache in inverse dynamics
+    hyps['cache_coef'] = .6
     hyps['env_type'] = "Breakout-v0"
-    hyps['exp_name'] = "invdyn"
+    hyps['exp_name'] = "4invdyn"
     hyps['use_gae'] = True
     hyps['n_tsteps'] = 128
     hyps['n_rollouts'] = 12
     hyps['n_envs'] = 12
-    hyps['max_tsteps'] = 6000000
+    hyps['max_tsteps'] = 50000000
     hyps['n_frame_stack'] = 3
     hyps['optim_type'] = 'rmsprop'
-    hyps['cache_size'] = 2000
+    hyps['cache_size'] = 3000
     hyps['n_cache_refresh'] = 200
     search_log = open(hyps['exp_name']+"_searchlog.txt", 'w')
     hyper_params = HyperParams(hyps)
