@@ -58,15 +58,15 @@ class ConvModel(nn.Module):
         self.features = nn.Sequential(*self.convs)
         self.flat_size = int(np.prod(shape))
         print("Flat Features Size:", self.flat_size)
-        self.resize_emb = nn.Linear(self.flat_size, self.h_size)
+        self.resize_emb = nn.Sequential(nn.Linear(self.flat_size, self.h_size), nn.ReLU())
 
         # Fwd Dynamics
-        self.fwd_dynamics = nn.Sequential(nn.ReLU(), nn.Linear(self.h_size+output_space, self.h_size), 
+        self.fwd_dynamics = nn.Sequential(nn.Linear(self.h_size+output_space, self.h_size), 
                                     nn.ReLU(), nn.Linear(self.h_size, self.h_size), 
                                     nn.ReLU(), nn.Linear(self.h_size, self.h_size)) 
 
         # Policy
-        self.pre_valpi = nn.Sequential(nn.ReLU(), nn.Linear(self.h_size, self.h_size), nn.ReLU())
+        self.pre_valpi = nn.Sequential(nn.Linear(self.h_size, self.h_size), nn.ReLU())
         self.pi = nn.Linear(self.h_size, self.output_space)
         self.value = nn.Linear(self.h_size, 1)
 
