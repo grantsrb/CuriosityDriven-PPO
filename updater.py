@@ -157,7 +157,8 @@ class Updater():
                 #use_idf = self.inv_net is not None
                 #loss.backward(retain_graph=use_idf)
                 loss.backward()
-                _ = nn.utils.clip_grad_norm_(self.inv_net.parameters(), hyps['max_norm'])
+                if self.inv_net is not None:
+                    _ = nn.utils.clip_grad_norm_(self.inv_net.parameters(), hyps['max_norm'])
                 self.norm = nn.utils.clip_grad_norm_(self.net.parameters(), hyps['max_norm'])
 
                 # Important to do fwd optim step first! This is because the fwd parameters are
@@ -166,8 +167,9 @@ class Updater():
                 self.fwd_optim.zero_grad()
                 self.optim.step()
                 self.optim.zero_grad()
-                self.inv_optim.step()
-                self.inv_optim.zero_grad()
+                if self.inv_net is not None:
+                    self.inv_optim.step()
+                    self.inv_optim.zero_grad()
                 #if use_idf:
                 #    inv_term = (1-hyps['inv_coef'])*inv_cache_loss + hyps['inv_coef']*inv_loss
                 #    inv_term.backward()
