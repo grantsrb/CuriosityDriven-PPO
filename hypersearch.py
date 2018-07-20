@@ -27,9 +27,9 @@ if __name__ == "__main__":
     hyps['exp_name'] = "brkout"
     hyps['use_gae'] = True
     hyps['n_tsteps'] = 128
-    hyps['n_rollouts'] = 9
-    hyps['n_envs'] = 9
-    hyps['max_tsteps'] = 1000
+    hyps['n_rollouts'] = 12
+    hyps['n_envs'] = 12
+    hyps['max_tsteps'] = 50000000
     hyps['n_frame_stack'] = 3
     hyps['optim_type'] = 'rmsprop'
     hyps['cache_size'] = 3000
