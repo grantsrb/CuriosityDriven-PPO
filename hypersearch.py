@@ -11,7 +11,7 @@ if __name__ == "__main__":
                 'fwd_lr': [5e-5, 1e-5, 1e-6],
                 }
     keys = list(hyp_ranges.keys())
-    hyps['use_idf'] = True
+    hyps['use_idf'] = False
     hyps['lr'] = .0001
     hyps['val_coef'] = .005
     hyps['norm_rews'] = True
@@ -24,12 +24,12 @@ if __name__ == "__main__":
     hyps['inv_coef'] = .5 # Portion due to cache in inverse dynamics
     hyps['cache_coef'] = .6
     hyps['env_type'] = "Breakout-v0"
-    hyps['exp_name'] = "4invdyn"
+    hyps['exp_name'] = "brkout"
     hyps['use_gae'] = True
     hyps['n_tsteps'] = 128
-    hyps['n_rollouts'] = 12
-    hyps['n_envs'] = 12
-    hyps['max_tsteps'] = 50000000
+    hyps['n_rollouts'] = 9
+    hyps['n_envs'] = 9
+    hyps['max_tsteps'] = 1000
     hyps['n_frame_stack'] = 3
     hyps['optim_type'] = 'rmsprop'
     hyps['cache_size'] = 3000
