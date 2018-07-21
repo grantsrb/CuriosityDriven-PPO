@@ -13,13 +13,13 @@ class HyperParams:
                     "env_type":"Breakout-v0", 
                     "optim_type":'rmsprop', # Options: rmsprop, adam
                     "fwd_optim_type":'rmsprop', # Options: rmsprop, adam
-                    "inv_optim_type":'rmsprop', # Options: rmsprop, adam
+                    "inv_optim_type":'adam', # Options: rmsprop, adam
                     }
 
         hyp_dict['int_hyps'] = {
                     "n_epochs": 3, # PPO update epoch count
                     "batch_size": 256, # PPO update batch size
-                    "h_size": 200,
+                    "h_size": 256,
                     "cache_batch": 256, # Batch size for cached data in forward dynamics loss
                     "max_tsteps": int(50e6),
                     "n_tsteps": 128, # Maximum number of tsteps per rollout per perturbed copy
@@ -62,12 +62,13 @@ class HyperParams:
                     "decay_entr": False,
                     "incr_gamma": False,
                     "use_nstep_rets": True,
-                    "norm_advs": False,
-                    "norm_batch_advs": True,
+                    "norm_advs": True,
+                    "norm_batch_advs": False,
                     "use_bnorm": False,
                     "use_gae": True,
                     "norm_rews": True,
                     "use_idf": False, # IDF stands for Inverse Dynamics Features
+                    "seperate_embs": True, # Uses seperate embedding model for policy and dynamics
                     }
         self.hyps = self.read_command_line(hyp_dict)
         if arg_hyps is not None:

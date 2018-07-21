@@ -20,8 +20,12 @@ class Updater():
     """
 
     def __init__(self, net, hyps, inv_net=None): 
-        self.net = net 
-        self.old_net = copy.deepcopy(self.net) 
+        self.net = net
+        self.old_net = copy.deepcopy(self.net)
+        if hyps['seperate_embs']:
+            self.fwd_embedder = copy.deepcopy(self.net.embedder)
+            if hyps['resume']:
+                self.fwd_embedder.load_state_dict(torch.load(hyps['fwd_emb_file']))
         self.hyps = hyps
         self.inv_net = inv_net
         self.gamma = hyps['gamma']
@@ -33,7 +37,8 @@ class Updater():
         self.fwd_optim = self.new_optim(net.fwd_dynamics.parameters(), hyps['fwd_lr'], optim_type)
         if inv_net is not None:
             optim_type = hyps['inv_optim_type']
-            self.inv_optim = self.new_optim(self.inv_net.parameters(), hyps['inv_lr'], optim_type)
+            params = list(self.inv_net.parameters()) + list(self.fwd_embedder.parameters())
+            self.inv_optim = self.new_optim(params, hyps['inv_lr'], optim_type)
         self.cache = None
 
         # Tracking variables
@@ -76,12 +81,13 @@ class Updater():
 
         # Make rewards
         self.net.req_grads(False)
-        embs = self.net.embeddings(Variable(states))
+        self.fwd_embedder.req_grads(False)
+        embs = self.fwd_embedder(Variable(states))
         one_hot_actions = cuda_if(self.one_hot_encode(actions, self.net.output_space))
         fwd_inputs = torch.cat([embs.data, one_hot_actions], dim=-1)
         fwd_preds = self.net.fwd_dynamics(Variable(fwd_inputs))
         del fwd_inputs
-        targets = torch.cat([embs.data[1:], self.net.embeddings(Variable(next_states[-1:])).data], dim=0)
+        targets = torch.cat([embs.data[1:], self.fwd_embedder(Variable(next_states[-1:])).data], dim=0)
         del embs
         rewards = F.mse_loss(fwd_preds, targets, size_average=False, reduce=False)
         rewards = rewards.view(len(fwd_preds),-1).mean(-1).data
@@ -109,6 +115,7 @@ class Updater():
         avg_epoch_inv_loss = 0
         self.net.train(mode=True)
         self.net.req_grads(True)
+        self.fwd_embedder.req_grads(self.inv_net is not None)
         self.old_net.load_state_dict(self.net.state_dict())
         self.old_net.train(mode=True)
         self.old_net.req_grads(False)
@@ -216,21 +223,19 @@ class Updater():
         actions - torch LongTensor minibatch of empirical actions with shape (batch_size,)
         """
         
-        embs = self.net.embeddings(Variable(states))
-        fwd_targs = self.net.embeddings(Variable(next_states))
+        embs = self.fwd_embedder(Variable(states))
+        fwd_targs = self.fwd_embedder(Variable(next_states))
         if self.inv_net is not None:
             inv_preds = self.inv_net(torch.cat([embs, fwd_targs], dim=-1))
             inv_loss = F.cross_entropy(inv_preds, Variable(cuda_if(actions)))
         else:
             inv_loss = Variable(cuda_if(torch.zeros(1)))
-            embs.detach()
-            fwd_targs.detach()
+        embs.detach(), fwd_targs.detach()
         one_hot_actions = self.one_hot_encode(actions, self.net.output_space)
         fwd_inputs = torch.cat([embs.data, cuda_if(one_hot_actions)], dim=-1)
         fwd_preds = self.net.fwd_dynamics(Variable(fwd_inputs))
         fwd_loss = F.mse_loss(fwd_preds, Variable(fwd_targs.data))
         return fwd_loss, inv_loss
-
 
     def ppo_losses(self, states, next_states, actions, advs, rets):
         """
@@ -251,13 +256,12 @@ class Updater():
         hyps = self.hyps
 
         # Get new Outputs
-        embs = self.net.embeddings(Variable(states))
-        vals, raw_pis = self.net.val_pi(embs)
+        vals, raw_pis = self.net(Variable(states))
         probs = F.softmax(raw_pis, dim=-1)
         pis = probs[cuda_if(torch.arange(0,len(probs)).long()), actions]
 
         # Get old Outputs
-        old_vals, old_raw_pis = self.old_net.forward(Variable(states))
+        old_vals, old_raw_pis = self.old_net(Variable(states))
         old_vals.detach(), old_raw_pis.detach()
         old_probs = F.softmax(old_raw_pis, dim=-1)
         old_pis = old_probs[cuda_if(torch.arange(0,len(old_probs))).long(), actions]
@@ -295,20 +299,21 @@ class Updater():
         entropy_step = torch.sum(softlogs*probs, dim=-1)
         entropy = -hyps['entr_coef'] * torch.mean(entropy_step)
 
-        # Fwd Dynamics Loss
-        one_hot_actions = self.one_hot_encode(actions, self.net.output_space)
-        fwd_inputs = torch.cat([embs.data, cuda_if(one_hot_actions)], dim=-1)
-        fwd_preds = self.net.fwd_dynamics(Variable(fwd_inputs))
-        next_embs = self.net.embeddings(Variable(next_states))
-        fwd_loss = F.mse_loss(fwd_preds, Variable(next_embs.data))
-
         # Inv Dynamics Loss
+        embs = self.fwd_embedder(Variable(states))
+        next_embs = self.fwd_embedder(Variable(next_states))
         if self.inv_net is not None:
             inv_inputs = torch.cat([embs, next_embs], dim=-1) # Backprop into embeddings
             inv_preds = self.inv_net(inv_inputs)
             inv_loss = F.cross_entropy(inv_preds, Variable(cuda_if(actions)))
         else:
             inv_loss = Variable(cuda_if(torch.zeros(1)))
+
+        # Fwd Dynamics Loss
+        one_hot_actions = self.one_hot_encode(actions, self.net.output_space)
+        fwd_inputs = torch.cat([embs.data, cuda_if(one_hot_actions)], dim=-1)
+        fwd_preds = self.net.fwd_dynamics(Variable(fwd_inputs))
+        fwd_loss = F.mse_loss(fwd_preds, Variable(next_embs.data))
 
         return policy_loss, val_loss, entropy, fwd_loss, inv_loss
 
@@ -341,8 +346,8 @@ class Updater():
         """
 
         self.net.req_grads(False)
-        vals, raw_pis = self.net.forward(Variable(states))
-        next_vals, _ = self.net.forward(Variable(next_states))
+        vals, raw_pis = self.net(Variable(states))
+        next_vals, _ = self.net(Variable(next_states))
         self.net.req_grads(True)
 
         # Make Advantages
@@ -352,10 +357,8 @@ class Updater():
         if self.use_nstep_rets: 
             returns = advantages + vals.data.squeeze()
         else: 
-            print("dones:", (dones==1).shape)
-            print("rews:", rewards[dones==1].shape)
-            print("nextws:", next_vals[dones==1].shape)
-            rewards[dones==1] += self.hyps['gamma']*next_vals[dones==1] # Include bootstrap
+            # Include bootstrap
+            rewards[dones==1] = rewards[dones==1] + self.hyps['gamma']*next_vals.data.squeeze()[dones==1] 
             returns = self.discount(rewards.squeeze(), dones.squeeze(), self.gamma)
 
         return advantages, returns

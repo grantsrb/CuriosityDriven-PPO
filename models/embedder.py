@@ -1,6 +1,5 @@
 import torch
 from torch.autograd import Variable
-from .embedder import Embedder
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
@@ -9,35 +8,56 @@ import numpy as np
 Simple, sequential convolutional net.
 '''
 
-class ConvModel(nn.Module):
+class Embedder(nn.Module):
 
     def cuda_if(self, tobj):
         if torch.cuda.is_available():
             tobj = tobj.cuda()
         return tobj
 
-    def __init__(self, input_space, output_space, h_size=200, bnorm=False):
-        super(ConvModel, self).__init__()
+    def __init__(self, input_space, h_size=200, bnorm=False):
+        super(Embedder, self).__init__()
 
         self.input_space = input_space
-        self.output_space = output_space
         self.h_size = h_size
         self.bnorm = bnorm
 
         self.convs = nn.ModuleList([])
 
         # Embedding Net
-        self.embedder = Embedder(input_space, h_size, bnorm)
+        shape = input_space.copy()
 
-        # Fwd Dynamics
-        self.fwd_dynamics = nn.Sequential(nn.Linear(self.h_size+output_space, self.h_size), 
-                                    nn.ReLU(), nn.Linear(self.h_size, self.h_size), 
-                                    nn.ReLU(), nn.Linear(self.h_size, self.h_size))
+        ksize=3; stride=1; padding=1; out_depth=16
+        self.convs.append(self.conv_block(input_space[-3],out_depth,ksize=ksize,
+                                            stride=stride, padding=padding, 
+                                            bnorm=self.bnorm))
+        shape = self.get_new_shape(shape, out_depth, ksize, padding=padding, stride=stride)
 
-        # Policy
-        self.pre_valpi = nn.Sequential(nn.Linear(self.h_size, self.h_size), nn.ReLU())
-        self.pi = nn.Linear(self.h_size, self.output_space)
-        self.value = nn.Linear(self.h_size, 1)
+        ksize=3; stride=2; padding=1; in_depth=out_depth
+        out_depth=32
+        self.convs.append(self.conv_block(in_depth,out_depth,ksize=ksize,
+                                            stride=stride, padding=padding, 
+                                            bnorm=self.bnorm))
+        shape = self.get_new_shape(shape, out_depth, ksize, padding=padding, stride=stride)
+
+        ksize=3; stride=2; padding=1; in_depth=out_depth
+        out_depth=48
+        self.convs.append(self.conv_block(in_depth,out_depth,ksize=ksize,
+                                            stride=stride, padding=padding, 
+                                            bnorm=self.bnorm))
+        shape = self.get_new_shape(shape, out_depth, ksize, padding=padding, stride=stride)
+
+        ksize=3; stride=2; padding=1; in_depth=out_depth
+        out_depth=64
+        self.convs.append(self.conv_block(in_depth,out_depth,ksize=ksize,
+                                            stride=stride, padding=padding, 
+                                            bnorm=self.bnorm))
+        shape = self.get_new_shape(shape, out_depth, ksize, padding=padding, stride=stride)
+        
+        self.features = nn.Sequential(*self.convs)
+        self.flat_size = int(np.prod(shape))
+        print("Flat Features Size:", self.flat_size)
+        self.resize_emb = nn.Sequential(nn.Linear(self.flat_size, self.h_size), nn.ReLU())
 
     def get_new_shape(self, shape, depth, ksize, padding, stride):
         new_shape = [depth]
@@ -48,31 +68,16 @@ class ConvModel(nn.Module):
     def new_size(self, shape, ksize, padding, stride):
         return (shape - ksize + 2*padding)//stride + 1
 
-    def forward(self, x):
-        embs = self.embeddings(x)
-        val, pi = self.val_pi(embs)
-        return val, pi
-
-    def embeddings(self, state):
+    def forward(self, state):
         """
         Creates an embedding for the state.
 
         state - Variable FloatTensor with shape (BatchSize, Channels, Height, Width)
         """
-        return self.embedder(state)
-
-    def val_pi(self, state_emb):
-        """
-        Uses the state embedding to produce an action.
-
-        state_emb - the state embedding created by the emb_net
-        """
-        if self.bnorm:
-            state_emb = self.emb_bnorm(state_emb)
-        state_emb = self.pre_valpi(state_emb)
-        pi = self.pi(state_emb)
-        value = self.value(state_emb)
-        return value, pi
+        feats = self.features(state)
+        feats = feats.view(feats.shape[0], -1)
+        state_embs = self.resize_emb(feats)
+        return state_embs
 
     def conv_block(self, chan_in, chan_out, ksize=3, stride=1, padding=1, activation="lerelu", max_pool=False, bnorm=True):
         block = []

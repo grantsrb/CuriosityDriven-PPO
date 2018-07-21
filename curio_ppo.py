@@ -43,6 +43,7 @@ class CurioPPO:
         best_net_file = base_name+"_best.p"
         optim_save_file = base_name+"_optim.p"
         fwd_optim_file = base_name+"_fwdoptim.p"
+        hyps['fwd_emb_file'] = base_name+"_fwdemb.p"
         if hyps['inv_model'] is not None:
             inv_save_file = base_name+"_invnet.p"
             inv_optim_file = base_name+"_invoptim.p"
