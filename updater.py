@@ -161,10 +161,10 @@ class Updater():
                 loss = ppo_term + fwd_term
 
                 # Gradient Step
-                #use_idf = self.inv_net is not None
+                using_idf = self.inv_net is not None
                 #loss.backward(retain_graph=use_idf)
                 loss.backward()
-                if self.inv_net is not None:
+                if using_idf:
                     _ = nn.utils.clip_grad_norm_(self.inv_net.parameters(), hyps['max_norm'])
                 self.norm = nn.utils.clip_grad_norm_(self.net.parameters(), hyps['max_norm'])
 
@@ -174,7 +174,7 @@ class Updater():
                 self.fwd_optim.zero_grad()
                 self.optim.step()
                 self.optim.zero_grad()
-                if self.inv_net is not None:
+                if using_idf:
                     self.inv_optim.step()
                     self.inv_optim.zero_grad()
                 #if use_idf:

@@ -10,8 +10,7 @@ if __name__ == "__main__":
                 'fwd_lr': [1e-6, 1e-7],
                 'lr': [1e-4, 1e-5, 1e-6, 1e-7],
                 }
-    #keys = list(hyp_ranges.keys())
-    keys = ['lr', 'fwd_lr']
+    keys = list(hyp_ranges.keys())
     hyps['use_idf'] = False
     hyps['fwd_coef'] = .8
     hyps['val_coef'] = .5
