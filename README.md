@@ -127,6 +127,7 @@ See `hyperparams.py` to access the default values.
 * `use_gae` - Uses Generalized Advantage Estimation with value predictions and bootstrapped rewards if set to true. Otherwise uses raw intrinsic rewards.
 * `norm_rews` - Normalizes the rewards collected from the forward dynamics error if set to true. This can help prevent divergent gradients.
 * `use_idf` - Includes inverse dynamics model in model updating if set to true. IDF stands for Inverse Dynamics Features.
+* `separate_embs` - Uses seperate embedding model for policy and dynamics if True. If `use_idf` is also set to true, the inverse dynamics gradients are used to train the embedding model associated with the forward dynamics. Gradients from the forward dynamics are not propagated into any embedding model.
 
 ##### Specific to snake-v0
 * `grid_size` - integer denoting square dimensions for size of grid for snake.
