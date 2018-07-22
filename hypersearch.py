@@ -7,12 +7,11 @@ if __name__ == "__main__":
     ppo_trainer = CurioPPO()
     hyps = dict()
     hyp_ranges = {
-                'fwd_lr': [1e-5, 1e-6, 1e-7, 1e-4],
-                'lr': [1e-5, 1e-6, 1e-7, 1e-4],
-                'inv_lr': [1e-6],
+                'fwd_lr': [1e-6, 1e-7],
+                'lr': [1e-4, 1e-5, 1e-6, 1e-7],
                 }
     #keys = list(hyp_ranges.keys())
-    keys = ['inv_lr', 'lr', 'fwd_lr']
+    keys = ['lr', 'fwd_lr']
     hyps['use_idf'] = False
     hyps['fwd_coef'] = .8
     hyps['val_coef'] = .5
@@ -27,7 +26,7 @@ if __name__ == "__main__":
     hyps['inv_coef'] = .5 # Portion due to cache in inverse dynamics
     hyps['cache_coef'] = .5
     hyps['env_type'] = "Breakout-v0"
-    hyps['exp_name'] = "4sepembs"
+    hyps['exp_name'] = "5sepembs"
     hyps['n_tsteps'] = 64
     hyps['n_rollouts'] = 24
     hyps['n_envs'] = 12
