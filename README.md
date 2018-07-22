@@ -21,6 +21,11 @@ This data was collected using the forward dynamics model without the inverse dyn
 
 ------------------
 
+![fwd dynamics only seperate embedding model avg rew](./figures/seprtembs_AvgRew.png)
+
+This data was collected using the forward dynamics model without the inverse dynamics model (or any other auxiliary loss) using a seperate encoder for the forward dynamics and the policy. The encoder for the forward dynamics model was not trained after instantiation.
+
+------------------
 
 ## Dependencies
 - python 3.5 or later
