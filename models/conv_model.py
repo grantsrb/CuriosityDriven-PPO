@@ -16,27 +16,31 @@ class ConvModel(nn.Module):
             tobj = tobj.cuda()
         return tobj
 
-    def __init__(self, input_space, output_space, h_size=200, bnorm=False):
+    def __init__(self, input_space, output_space, h_size=200,
+                                                  bnorm=False,
+                                                  discrete_env=True):
         super(ConvModel, self).__init__()
 
         self.input_space = input_space
         self.output_space = output_space
         self.h_size = h_size
         self.bnorm = bnorm
-
-        self.convs = nn.ModuleList([])
+        self.discrete_env = discrete_env
 
         # Embedding Net
         self.embedder = Embedder(input_space, h_size, bnorm)
 
         # Fwd Dynamics
-        self.fwd_dynamics = nn.Sequential(nn.Linear(self.h_size+output_space, self.h_size), 
-                                    nn.ReLU(), nn.Linear(self.h_size, self.h_size), 
-                                    nn.ReLU(), nn.Linear(self.h_size, self.h_size))
+        self.fwd_dynamics = nn.Sequential(
+            nn.Linear(self.h_size+output_space, self.h_size), 
+            nn.ReLU(), nn.Linear(self.h_size, self.h_size), 
+            nn.ReLU(), nn.Linear(self.h_size, self.h_size))
 
         # Policy
         self.pre_valpi = nn.Sequential(nn.Linear(self.h_size, self.h_size), nn.ReLU())
         self.pi = nn.Linear(self.h_size, self.output_space)
+        if not self.discrete_env:
+            self.logsigs = nn.Parameter(torch.zeros(1,self.output_space))
         self.value = nn.Linear(self.h_size, 1)
 
     def get_new_shape(self, shape, depth, ksize, padding, stride):
@@ -72,6 +76,11 @@ class ConvModel(nn.Module):
         state_emb = self.pre_valpi(state_emb)
         pi = self.pi(state_emb)
         value = self.value(state_emb)
+        if not self.discrete_env:
+            sig = torch.exp(self.logsigs)+0.00001
+            sig = sig.repeat(len(pi),1)
+            mu = torch.tanh(pi)
+            return value, (mu,sig)
         return value, pi
 
     def conv_block(self, chan_in, chan_out, ksize=3, stride=1, padding=1, activation="lerelu", max_pool=False, bnorm=True):

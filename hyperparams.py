@@ -8,12 +8,13 @@ class HyperParams:
         
         hyp_dict = dict()
         hyp_dict['string_hyps'] = {
-                    "exp_name":"default",
+                    "exp_name":"breakoutPiEmbs",
                     "model_type":"conv", # Options include 'dense', 'conv', 'a3c'
                     "env_type":"Breakout-v0", 
                     "optim_type":'rmsprop', # Options: rmsprop, adam
                     "fwd_optim_type":'rmsprop', # Options: rmsprop, adam
                     "inv_optim_type":'adam', # Options: rmsprop, adam
+                    "save_folder":"/data2/pdplab/grantsrb/curioppo_saves/"
                     }
 
         hyp_dict['int_hyps'] = {
@@ -42,9 +43,11 @@ class HyperParams:
                     "lambda_":.95,
                     "gamma":.99,
                     "gamma_high":.995,
+                    "pi_coef":1,
                     "val_coef":.005,
-                    "entr_coef":.008,
+                    "entr_coef":0.008,
                     "entr_coef_low":.001,
+                    "sigma_l2":0,
                     "max_norm":.5,
                     "epsilon": .2, # PPO update clipping constant
                     "epsilon_low":.05,
@@ -67,8 +70,9 @@ class HyperParams:
                     "use_bnorm": False,
                     "use_gae": True,
                     "norm_rews": True,
+                    "running_rew_norm": False,
                     "use_idf": False, # IDF stands for Inverse Dynamics Features
-                    "seperate_embs": True, # Uses seperate embedding model for policy and dynamics
+                    "seperate_embs": False, # Uses seperate embedding model for policy and dynamics, gradients are not backpropagated in either case
                     }
         self.hyps = self.read_command_line(hyp_dict)
         if arg_hyps is not None:
@@ -104,8 +108,10 @@ class HyperParams:
             self.hyps['preprocess'] = preprocessing.breakout_prep
         elif "snake" in env_type:
             self.hyps['preprocess'] = preprocessing.snake_prep
+        elif "pendulum" in env_type or "mountaincar" in env_type:
+            self.hyps['preprocess'] = preprocessing.pendulum_prep
         else:
-            self.hyps['preprocess'] = preprocessing.atari_prep
+            self.hyps['preprocess'] = preprocessing.null_prep
 
     def read_command_line(self, hyps_dict):
         """

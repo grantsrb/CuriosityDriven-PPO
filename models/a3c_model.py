@@ -5,21 +5,31 @@ import torch.nn.functional as F
 import numpy as np
 
 class A3CModel(nn.Module):
-    def __init__(self, input_space, output_space, h_size=256, bnorm=False):
+    def __init__(self, input_space, output_space, h_size=256,
+                                                  bnorm=False,
+                                                  discrete_env=True):
         super(Model, self).__init__()
 
         self.input_space = input_space
         self.output_space = output_space
         self.h_size = h_size
+        self.discrete_env = discrete_env
 
         # Embedding Net
         self.convs = nn.ModuleList([])
         shape = input_space.copy()
-        self.conv1 = self.conv_block(input_space[-3],16, ksize=8, stride=4, padding=0, bnorm=bnorm, activation='relu')
+        self.conv1 = self.conv_block(input_space[-3],16,ksize=8,
+                                                     stride=4,
+                                                     padding=0,
+                                                     bnorm=bnorm,
+                                                     activation='relu')
         self.convs.append(self.conv1)
         shape = self.new_shape(shape, 16, ksize=8, stride=4, padding=0)
 
-        self.conv2 = self.conv_block(16, 32, ksize=4, stride=2, padding=0, bnorm=bnorm, activation='relu')
+        self.conv2 = self.conv_block(16, 32, ksize=4, stride=2,
+                                                      padding=0,
+                                                      bnorm=bnorm,
+                                                      activation='relu')
         self.convs.append(self.conv2)
         shape = self.new_shape(shape, 32, ksize=4, stride=2, padding=0)
 
@@ -30,6 +40,8 @@ class A3CModel(nn.Module):
         # Policy
         self.emb_bnorm = nn.BatchNorm1d(self.h_size)
         self.pi = nn.Linear(self.h_size, self.output_space)
+        if not self.discrete_env:
+            self.logsigs = nn.Parameter(torch.zeros(1,self.output_space))
         self.value = nn.Linear(self.h_size, 1)
 
     def new_size(self, shape, ksize, padding, stride):
@@ -67,6 +79,11 @@ class A3CModel(nn.Module):
             state_emb = self.emb_bnorm(state_emb)
         pi = self.pi(state_emb)
         value = self.value(Variable(state_emb.data))
+        if not self.discrete_env:
+            sig = torch.exp(self.logsigs)+0.00001
+            sig = sig.repeat(len(pi),1)
+            mu = torch.tanh(pi)
+            return value, (mu,sig)
         return value, pi
 
     def conv_block(self, chan_in, chan_out, ksize=3, stride=1, padding=1, activation="relu", max_pool=False, bnorm=True):

@@ -57,7 +57,10 @@ class Embedder(nn.Module):
         self.features = nn.Sequential(*self.convs)
         self.flat_size = int(np.prod(shape))
         print("Flat Features Size:", self.flat_size)
-        self.resize_emb = nn.Sequential(nn.Linear(self.flat_size, self.h_size), nn.ReLU())
+
+        block = [nn.Linear(self.flat_size, self.h_size)] 
+        #block.append(nn.ReLU())
+        self.resize_emb = nn.Sequential(*block)
 
     def get_new_shape(self, shape, depth, ksize, padding, stride):
         new_shape = [depth]
@@ -140,6 +143,52 @@ class Embedder(nn.Module):
         if type(x) == type(Variable()):
             noise = Variable(noise)
         return x*noise
+
+    def req_grads(self, calc_bool):
+        """
+        An on-off switch for the requires_grad parameter for each internal Parameter.
+
+        calc_bool - Boolean denoting whether gradients should be calculated.
+        """
+        for param in self.parameters():
+            param.requires_grad = calc_bool
+
+class FCEmbedder(nn.Module):
+
+    def cuda_if(self, tobj):
+        if torch.cuda.is_available():
+            tobj = tobj.cuda()
+        return tobj
+
+    def __init__(self, input_space, h_size=200, bnorm=False):
+        super().__init__()
+
+        self.input_space = input_space
+        self.flat_size = int(np.prod(input_space))
+        self.h_size = h_size
+        self.bnorm = bnorm
+        
+        modules = []
+        modules.append(nn.Linear(self.flat_size,h_size))
+        if self.bnorm:
+            modules.append(nn.BatchNorm1d(h_size))
+        modules.append(nn.ReLU())
+        modules.append(nn.Linear(h_size, h_size))
+        if bnorm:
+            modules.append(nn.BatchNorm1d(h_size))
+        modules.append(nn.ReLU())
+        modules.append(nn.Linear(self.h_size,h_size))
+        #modules.append(nn.ReLU())
+
+        self.features = nn.Sequential(*modules)
+
+    def forward(self, state):
+        """
+        Creates an embedding for the state.
+
+        state - Variable FloatTensor (BatchSize, Channels, Height, Width)
+        """
+        return self.features(state.reshape(len(state),-1))
 
     def req_grads(self, calc_bool):
         """

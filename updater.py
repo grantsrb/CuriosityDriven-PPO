@@ -22,6 +22,7 @@ class Updater():
     def __init__(self, net, hyps, inv_net=None): 
         self.net = net
         self.old_net = copy.deepcopy(self.net)
+        self.fwd_embedder = self.net.embedder
         if hyps['seperate_embs']:
             self.fwd_embedder = copy.deepcopy(self.net.embedder)
             if hyps['resume']:
@@ -49,6 +50,9 @@ class Updater():
         self.min_rew = 1e15
         self.max_minsurr = -1e10
         self.min_minsurr = 1e10
+        self.update_count = 0
+        self.rew_mu  = None
+        self.rew_sig = None
 
     def update_model(self, shared_data):
         """
@@ -71,6 +75,7 @@ class Updater():
                             type: LongTensor
                             shape: (n_states,)
         """
+        self.update_count += 1
         hyps = self.hyps
         states = shared_data['states']
         next_states = shared_data['next_states']
@@ -82,33 +87,49 @@ class Updater():
         # Make rewards
         self.net.req_grads(False)
         self.fwd_embedder.req_grads(False)
-        embs = self.fwd_embedder(Variable(states))
-        one_hot_actions = cuda_if(self.one_hot_encode(actions, self.net.output_space))
-        fwd_inputs = torch.cat([embs.data, one_hot_actions], dim=-1)
-        fwd_preds = self.net.fwd_dynamics(Variable(fwd_inputs))
-        del fwd_inputs
-        targets = torch.cat([embs.data[1:], self.fwd_embedder(Variable(next_states[-1:])).data], dim=0)
-        del embs
-        rewards = F.mse_loss(fwd_preds, targets, size_average=False, reduce=False)
-        rewards = rewards.view(len(fwd_preds),-1).mean(-1).data
+        with torch.no_grad():
+            embs = self.fwd_embedder(Variable(states))
+            if self.hyps['discrete_env']:
+                fwd_actions = cuda_if(self.one_hot_encode(actions,
+                                           self.net.output_space))
+            else:
+                fwd_actions = actions
+            fwd_inputs = torch.cat([embs.data, fwd_actions], dim=-1)
+            fwd_preds = self.net.fwd_dynamics(Variable(fwd_inputs))
+            del fwd_inputs
+            targets = torch.cat([embs.data[1:], self.fwd_embedder(Variable(next_states[-1:])).data], dim=0)
+            del embs
+            rewards = F.mse_loss(fwd_preds, targets, reduction="none")
+            rewards = rewards.view(len(fwd_preds),-1).mean(-1).data
         # Bootstrapped value predictions are added within the make_advs_and_rets fxn
         # in the case of using the discounted rewards for the returns
         del targets
         del fwd_preds
-        if hyps['norm_rews']:
-            rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-5)
+        if hyps['norm_rews'] or hyps['running_rew_norm']:
+            if self.rew_mu is None or not hyps['running_rew_norm']:
+                self.rew_mu,self.rew_sig = rewards.mean(),rewards.std()
+            else:
+                new_p = 1/self.update_count
+                old_p = 1-new_p
+                self.rew_mu = new_p*rewards.mean() + old_p*self.rew_mu
+                self.rew_sig = new_p*rewards.std() + old_p*self.rew_sig
+            rewards = (rewards - self.rew_mu) / (self.rew_sig + 1e-5)
         self.max_rew = max(rewards.max().item(), self.max_rew)
         self.min_rew = min(rewards.min().item(), self.min_rew)
 
         if hyps['use_gae']:
-            advantages, returns = self.make_advs_and_rets(states,next_states,rewards,dones)
+            advantages, returns = self.make_advs_and_rets(states,
+                                                          next_states,
+                                                          rewards,
+                                                          dones)
         else:
             # No bootstrapped values added when using this option
             advantages = self.discount(rewards, dones, hyps['gamma'])
             returns = advantages
 
         if hyps['norm_advs']:
-            advantages = (advantages - advantages.mean())/(advantages.std()+1e-6)
+            advantages = (advantages-advantages.mean())/\
+                                  (advantages.std()+1e-6)
 
         avg_epoch_loss,avg_epoch_policy_loss,avg_epoch_val_loss,avg_epoch_entropy = 0,0,0,0
         avg_epoch_fwd_loss = 0
@@ -121,7 +142,6 @@ class Updater():
         self.old_net.req_grads(False)
         self.optim.zero_grad()
         for epoch in range(hyps['n_epochs']):
-
             loss, epoch_loss, epoch_policy_loss, epoch_val_loss, epoch_entropy = 0,0,0,0,0
             epoch_fwd_loss = 0
             epoch_inv_loss = 0
@@ -131,7 +151,6 @@ class Updater():
                 cache_idxs = torch.randperm(cache_len).long()
 
             for i in range(len(indices)//hyps['batch_size']):
-
                 # Get data for batch
                 startdx = i*hyps['batch_size']
                 endx = (i+1)*hyps['batch_size']
@@ -215,8 +234,8 @@ class Updater():
 
     def cache_losses(self, states, next_states, actions):
         """
-        Creates a loss term from historical data to avoid forgetting within the forward
-        dynamics model.
+        Creates a loss term from historical data to avoid forgetting
+        within the forward dynamics model.
 
         states - torch FloatTensor minibatch of states with shape (batch_size, C, H, W)
         next_states - torch FloatTensor minibatch of next states with shape (batch_size, C, H, W)
@@ -231,8 +250,11 @@ class Updater():
         else:
             inv_loss = Variable(cuda_if(torch.zeros(1)))
         embs.detach(), fwd_targs.detach()
-        one_hot_actions = self.one_hot_encode(actions, self.net.output_space)
-        fwd_inputs = torch.cat([embs.data, cuda_if(one_hot_actions)], dim=-1)
+        if self.hyps['discrete_env']:
+            fwd_actions = self.one_hot_encode(actions, self.net.output_space)
+        else:
+            fwd_actions = actions
+        fwd_inputs = torch.cat([embs.data, cuda_if(fwd_actions)], dim=-1)
         fwd_preds = self.net.fwd_dynamics(Variable(fwd_inputs))
         fwd_loss = F.mse_loss(fwd_preds, Variable(fwd_targs.data))
         return fwd_loss, inv_loss
@@ -255,31 +277,49 @@ class Updater():
         """
         hyps = self.hyps
 
-        # Get new Outputs
+        # Get Outputs
         vals, raw_pis = self.net(Variable(states))
-        probs = F.softmax(raw_pis, dim=-1)
-        pis = probs[cuda_if(torch.arange(0,len(probs)).long()), actions]
+        with torch.no_grad():
+            old_vals, old_raw_pis = self.old_net(Variable(states))
 
-        # Get old Outputs
-        old_vals, old_raw_pis = self.old_net(Variable(states))
-        old_vals.detach(), old_raw_pis.detach()
-        old_probs = F.softmax(old_raw_pis, dim=-1)
-        old_pis = old_probs[cuda_if(torch.arange(0,len(old_probs))).long(), actions]
-
-        # Policy Loss
         if hyps['norm_batch_advs']:
             advs = (advs - advs.mean())
             advs = advs / (advs.std() + 1e-7)
         self.max_adv = max(torch.max(advs), self.max_adv) # Tracking variable
         self.min_adv = min(torch.min(advs), self.min_adv) # Tracking variable
         advs = Variable(advs)
-        ratio = pis/(old_pis+1e-5)
+
+        if self.hyps['discrete_env']:
+            probs = F.softmax(raw_pis, dim=-1)
+            pis = probs[cuda_if(torch.arange(0,len(probs)).long()), actions]
+            old_vals.detach(), old_raw_pis.detach()
+            old_probs = F.softmax(old_raw_pis, dim=-1)
+            old_pis = old_probs[cuda_if(torch.arange(0,len(old_probs))).long(), actions]
+            ratio = pis/(old_pis+1e-5)
+
+            # Entropy Loss
+            softlogs = F.log_softmax(raw_pis, dim=-1)
+            entropy_step = torch.sum(softlogs*probs, dim=-1)
+            entropy = -hyps['entr_coef'] * torch.mean(entropy_step)
+        else:
+            mus,sigs = raw_pis
+            log_ps = self.calc_log_ps(mus,sigs,actions)
+            old_mus, old_sigs = old_raw_pis
+            old_log_ps = self.calc_log_ps(old_mus,old_sigs,actions)
+            ratio = torch.exp(log_ps-old_log_ps)
+
+            # Entropy Loss
+            entr = (torch.log(2*float(np.pi)*sigs**2+0.0001)+1)/2
+            entropy = hyps['entr_coef']*entr.mean()
+            entropy -= hyps['sigma_l2']*torch.norm(sigs,2).mean()
+
+        # Policy Loss
         surrogate1 = ratio*advs
         surrogate2 = torch.clamp(ratio, 1.-hyps['epsilon'], 1.+hyps['epsilon'])*advs
         min_surr = torch.min(surrogate1, surrogate2)
         self.max_minsurr = max(torch.max(min_surr.data), self.max_minsurr)
         self.min_minsurr = min(torch.min(min_surr.data), self.min_minsurr)
-        policy_loss = -min_surr.mean()
+        policy_loss = -hyps['pi_coef']*min_surr.mean()
 
         # Value loss
         if hyps['use_gae']:
@@ -290,14 +330,10 @@ class Updater():
                 v2 = .5*(clipped_vals.squeeze()-rets)**2
                 val_loss = hyps['val_coef'] * torch.max(v1,v2).mean()
             else:
-                val_loss = hyps['val_coef'] * F.mse_loss(vals.squeeze(), rets)
+                val_loss = hyps['val_coef']*F.mse_loss(vals.squeeze(), rets)
         else:
             val_loss = Variable(cuda_if(torch.zeros(1)))
 
-        # Entropy Loss
-        softlogs = F.log_softmax(raw_pis, dim=-1)
-        entropy_step = torch.sum(softlogs*probs, dim=-1)
-        entropy = -hyps['entr_coef'] * torch.mean(entropy_step)
 
         # Inv Dynamics Loss
         embs = self.fwd_embedder(Variable(states))
@@ -310,12 +346,29 @@ class Updater():
             inv_loss = Variable(cuda_if(torch.zeros(1)))
 
         # Fwd Dynamics Loss
-        one_hot_actions = self.one_hot_encode(actions, self.net.output_space)
-        fwd_inputs = torch.cat([embs.data, cuda_if(one_hot_actions)], dim=-1)
+        if self.hyps['discrete_env']:
+            fwd_actions = self.one_hot_encode(actions, self.net.output_space)
+        else:
+            fwd_actions = actions
+        fwd_inputs = torch.cat([embs.data, cuda_if(fwd_actions)], dim=-1)
         fwd_preds = self.net.fwd_dynamics(Variable(fwd_inputs))
         fwd_loss = F.mse_loss(fwd_preds, Variable(next_embs.data))
 
         return policy_loss, val_loss, entropy, fwd_loss, inv_loss
+
+    def calc_log_ps(self, mus, sigmas, actions):
+        """
+        calculates the log probability of pi using the mean and stddev
+
+        mus: FloatTensor (...,)
+        sigmas: FloatTensor (...,)
+        actions: FloatTensor (...,)
+        """
+        # log_ps should be -(mu-act)^2/(2sig^2)+ln(1/(sqrt(2pi)sig))
+        log_ps = -F.mse_loss(mus,actions.cuda(),reduction="none")
+        log_ps = log_ps/(2*torch.clamp(sigmas**2,min=1e-4))
+        logsigs = torch.log(torch.sqrt(2*float(np.pi)*sigmas))
+        return log_ps - logsigs
 
     def one_hot_encode(self, idxs, width):
         """

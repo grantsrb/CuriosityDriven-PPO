@@ -60,13 +60,16 @@ class CurioPPO:
         logger = Logger()
         shared_len = hyps['n_tsteps']*hyps['n_rollouts']
         env = gym.make(hyps['env_type'])
+        hyps['discrete_env'] = hasattr(env.action_space, "n")
         obs = env.reset()
         prepped = hyps['preprocess'](obs)
         hyps['state_shape'] = [hyps['n_frame_stack']] + [*prepped.shape[1:]]
-        if hyps['env_type'] == "Pong-v0":
+        if not hyps['discrete_env']:
+            action_size = int(np.prod(env.action_space.shape))
+        elif hyps['env_type'] == "Pong-v0":
             action_size = 3
         else:
-            action_size = env.action_space.n*(hyps['env_type']!="Pong-v0")
+            action_size = env.action_space.n
         hyps['action_shift'] = (4-action_size)*(hyps['env_type']=="Pong-v0") 
         print("Obs Shape:,",obs.shape)
         print("Prep Shape:,",prepped.shape)
@@ -79,8 +82,12 @@ class CurioPPO:
         # Prepare Shared Variables
         shared_data = {'states': cuda_if(torch.zeros(shared_len, *hyps['state_shape']).share_memory_()),
                 'next_states': cuda_if(torch.zeros(shared_len, *hyps['state_shape']).share_memory_()),
-                'actions': torch.zeros(shared_len).long().share_memory_(),
                 'dones': cuda_if(torch.zeros(shared_len).share_memory_())}
+        if hyps['discrete_env']:
+            shared_data['actions'] = cuda_if(torch.zeros(shared_len).long().share_memory_())
+        else:
+            shape = (shared_len, action_size)
+            shared_data['actions'] = cuda_if(torch.zeros(shape).float().share_memory_())
         n_rollouts = hyps['n_rollouts']
         gate_q = mp.Queue(n_rollouts)
         stop_q = mp.Queue(n_rollouts)
@@ -95,7 +102,9 @@ class CurioPPO:
 
         # Make Network
         h_size = hyps['h_size']
-        net = hyps['model'](hyps['state_shape'], action_size, h_size, bnorm=hyps['use_bnorm'])
+        net = hyps['model'](hyps['state_shape'], action_size, h_size,
+                                            bnorm=hyps['use_bnorm'],
+                                            discrete_env=hyps['discrete_env'])
         if hyps['inv_model'] is not None:
             inv_net = hyps['inv_model'](h_size, action_size)
             inv_net = cuda_if(inv_net)
@@ -144,6 +153,7 @@ class CurioPPO:
         best_rew_diff = 0
         best_avg_rew = -100
         epoch = 0
+        done_count = 0
         T = 0
         try:
             while T < hyps['max_tsteps']:
@@ -159,7 +169,8 @@ class CurioPPO:
                 avg_reward = reward_q.get()
                 reward_q.put(avg_reward)
                 last_avg_rew = avg_reward
-                if avg_reward > best_avg_rew:
+                done_count += shared_data['dones'].sum().item()
+                if avg_reward > best_avg_rew and done_count > n_rollouts:
                     best_avg_rew = avg_reward
                     updater.save_model(best_net_file, None, None)
 
@@ -194,9 +205,13 @@ class CurioPPO:
                 past_rews.popleft()
                 past_rews.append(avg_reward)
                 max_rew, min_rew = deque_maxmin(past_rews)
+                print("Epoch", epoch, "– T =", T, "-- Folder:", base_name)
+                if not hyps['discrete_env']:
+                    s = ("{:.5f} | "*net.logsigs.shape[1])
+                    s = s.format(*[x.item() for x in torch.exp(net.logsigs[0])])
+                    print("Sigmas:", s)
                 updater.print_statistics()
                 avg_action = shared_data['actions'].float().mean().item()
-                print("Epoch", epoch, "– T =", T)
                 print("Grad Norm:",float(updater.norm),"– Avg Action:",avg_action,"– Best AvgRew:",best_avg_rew)
                 print("Avg Rew:", avg_reward, "– High:", max_rew, "– Low:", min_rew, end='\n')
                 updater.log_statistics(log, T, avg_reward, avg_action, best_avg_rew)

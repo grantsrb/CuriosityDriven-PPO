@@ -4,6 +4,7 @@ import torch
 import gym
 import torch.nn.functional as F
 from collections import deque
+import numpy as np
 
 class Runner:
     def __init__(self, datas, hyps, gate_q, stop_q, rew_q):
@@ -60,10 +61,11 @@ class Runner:
         self.net.train(mode=False) # fixes batchnorm issues
         for p in self.net.parameters(): # Turn off gradient collection
             p.requires_grad = False
-        while True:
-            idx = self.gate_q.get() # Opened from main process
-            self.rollout(self.net, idx, self.hyps)
-            self.stop_q.put(idx) # Signals to main process that data has been collected
+        with torch.no_grad():
+            while True:
+                idx = self.gate_q.get() # Opened from main process
+                self.rollout(self.net, idx, self.hyps)
+                self.stop_q.put(idx) # Signals to main process that data has been collected
 
     def rollout(self, net, idx, hyps):
         """
@@ -84,15 +86,23 @@ class Runner:
                                 creation of the mdp state
                     "preprocess" - function to preprocess raw observations
         """
+        hyps = self.hyps
         state = self.state_bookmark
         n_tsteps = hyps['n_tsteps']
         startx = idx*n_tsteps
         for i in range(n_tsteps):
             self.datas['states'][startx+i] = cuda_if(torch.FloatTensor(state))
-            val, logits = net(Variable(self.datas['states'][startx+i]).unsqueeze(0))
-            probs = F.softmax(logits, dim=-1)
-            action = sample_action(probs.data)
-            action = int(action.item())
+            val, logits = net(self.datas['states'][startx+i][None])
+            if self.hyps['discrete_env']:
+                probs = F.softmax(logits, dim=-1)
+                action = sample_action(probs.data)
+                action = int(action.item())
+            else:
+                mu,sig = logits
+                action = mu + torch.randn_like(sig)*sig
+                action = action.cpu().detach().numpy().squeeze()
+                if len(action.shape) == 0:
+                    action = np.asarray([float(action)])
             obs, rew, done, info = self.env.step(action+hyps['action_shift'])
             if hyps['render']:
                 self.env.render()
@@ -105,9 +115,13 @@ class Runner:
                 self.ep_rew = 0
 
             self.datas['dones'][startx+i] = 0
+            if isinstance(action, np.ndarray):
+                action = cuda_if(torch.from_numpy(action))
             self.datas['actions'][startx+i] = action
-            state = next_state(self.env, self.obs_deque, obs=obs, reset=reset, 
-                                            preprocess=hyps['preprocess'])
+            state = next_state(self.env, self.obs_deque,
+                                         obs=obs,
+                                         reset=reset, 
+                                         preprocess=hyps['preprocess'])
             if i > 0:
                 self.datas['next_states'][startx+i-1] = self.datas['states'][startx+i]
 
