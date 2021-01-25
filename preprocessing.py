@@ -48,5 +48,16 @@ def snake_prep(pic):
 def pendulum_prep(pic):
     return pic.squeeze()[None,:,None,None] # (1,3,1,1)
 
+def center_zero2one(obs):
+    """
+    obs: ndarray (C, H, W)
+        values must range from 0-1
+    """
+    obs = obs.astype(np.float32).transpose((2,0,1))
+    obs = 3*(obs-.5)/.5
+    if len(obs.shape)==2:
+        return obs[None]
+    return obs
+
 def null_prep(pic):
     return pic[None]

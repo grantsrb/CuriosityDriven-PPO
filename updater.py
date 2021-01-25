@@ -166,8 +166,8 @@ class Updater():
                     cache_batch = cache_states, cache_next_states, cache_actions
                     fwd_cache_loss, inv_cache_loss = self.cache_losses(*cache_batch)
                 else:
-                    fwd_cache_loss = Variable(torch.zeros(1))
-                    inv_cache_loss = Variable(torch.zeros(1))
+                    fwd_cache_loss = cuda_if(Variable(torch.zeros(1)))
+                    inv_cache_loss = cuda_if(Variable(torch.zeros(1)))
 
                 # Total Loss
                 policy_loss, val_loss, entropy, fwd_loss, inv_loss = self.ppo_losses(*batch_data)
@@ -314,6 +314,8 @@ class Updater():
             entropy -= hyps['sigma_l2']*torch.norm(sigs,2).mean()
 
         # Policy Loss
+        if len(ratio.shape) > len(advs.shape):
+            advs = advs[...,None]
         surrogate1 = ratio*advs
         surrogate2 = torch.clamp(ratio, 1.-hyps['epsilon'], 1.+hyps['epsilon'])*advs
         min_surr = torch.min(surrogate1, surrogate2)
@@ -454,11 +456,11 @@ class Updater():
 
     def update_cache(self, shared_data):
         keys = ['actions', 'states', 'next_states']
-        if self.cache is None and self.hyps['cache_size'] > 0:
+        if self.cache is None:
             self.cache = dict()
             for key in keys:
                 self.cache[key] = shared_data[key].clone()
-        else:
+        elif self.hyps['cache_size'] > 0:
             cache_size = self.hyps['cache_size']
             if len(self.cache[keys[0]]) < cache_size:
                 for key in keys:

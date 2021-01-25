@@ -4,6 +4,7 @@ import gym
 from logger import Logger
 from runner import Runner
 from updater import Updater
+from environments import SeqEnv
 import torch
 from torch.autograd import Variable
 import numpy as np
@@ -14,6 +15,7 @@ import copy
 import time
 from collections import deque
 from utils import cuda_if, deque_maxmin
+from ml_utils.utils import try_key
 
 class CurioPPO:
     def __init__(self):
@@ -24,6 +26,16 @@ class CurioPPO:
         hyps - dictionary of required hyperparameters
             type: dict
         """
+
+        # Initial settings
+        if "randomizeObjs" in hyps:
+            assert False, "you mean randomizeObs, not randomizeObjs"
+        if "audibleTargs" in hyps and hyps['audibleTargs'] > 0:
+            hyps['aud_targs'] = True
+            if verbose: print("Using audible targs!")
+        countOut = try_key(hyps, 'countOut', 0)
+        if countOut and not hyps['endAtOrigin']:
+            assert False, "endAtOrigin must be true for countOut setting"
 
         # Print Hyperparameters To Screen
         items = list(hyps.items())
@@ -59,11 +71,24 @@ class CurioPPO:
         # Miscellaneous Variable Prep
         logger = Logger()
         shared_len = hyps['n_tsteps']*hyps['n_rollouts']
-        env = gym.make(hyps['env_type'])
+        float_params = dict()
+        if "float_params" not in hyps:
+            try:
+                keys = hyps['game_keys']
+                hyps['float_params'] = {k:try_key(hyps,k,0) for k in keys}
+                if "minObjLoc" not in hyps:
+                    hyps['float_params']["minObjLoc"] = 0.27
+                    hyps['float_params']["maxObjLoc"] = 0.73
+                float_params = hyps['float_params']
+            except: pass
+        env = SeqEnv(hyps['env_type'], hyps['seed'],
+                                            worker_id=None,
+                                            float_params=float_params)
         hyps['discrete_env'] = hasattr(env.action_space, "n")
         obs = env.reset()
         prepped = hyps['preprocess'](obs)
-        hyps['state_shape'] = [hyps['n_frame_stack']] + [*prepped.shape[1:]]
+        hyps['state_shape'] = [hyps['n_frame_stack']*prepped.shape[0],
+                              *prepped.shape[1:]]
         if not hyps['discrete_env']:
             action_size = int(np.prod(env.action_space.shape))
         elif hyps['env_type'] == "Pong-v0":
@@ -75,8 +100,11 @@ class CurioPPO:
         print("Prep Shape:,",prepped.shape)
         print("State Shape:,",hyps['state_shape'])
         print("Num Samples Per Update:", shared_len)
-        assert hyps['n_cache_refresh'] <= shared_len or hyps['cache_size'] == 0
+        if not (hyps['n_cache_refresh'] <= shared_len or hyps['cache_size'] == 0):
+            hyps['n_cache_refresh'] = shared_len
         print("Samples Wasted in Update:", shared_len % hyps['batch_size'])
+        try: env.close()
+        except: pass
         del env
 
         # Prepare Shared Variables
@@ -91,13 +119,16 @@ class CurioPPO:
         n_rollouts = hyps['n_rollouts']
         gate_q = mp.Queue(n_rollouts)
         stop_q = mp.Queue(n_rollouts)
+        end_q = mp.Queue(1)
         reward_q = mp.Queue(1)
         reward_q.put(-1)
 
         # Make Runners
         runners = []
         for i in range(hyps['n_envs']):
-            runner = Runner(shared_data, hyps, gate_q, stop_q, reward_q)
+            runner = Runner(shared_data, hyps, gate_q, stop_q,
+                                                       end_q,
+                                                       reward_q)
             runners.append(runner)
 
         # Make Network
@@ -230,6 +261,8 @@ class CurioPPO:
         except KeyboardInterrupt:
             pass
 
+        end_q.put(1)
+        time.sleep(1)
         logger.make_plots(base_name)
         log.write("\nBestRew:"+str(best_avg_rew))
         log.close()

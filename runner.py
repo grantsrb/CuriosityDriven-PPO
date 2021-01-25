@@ -5,9 +5,11 @@ import gym
 import torch.nn.functional as F
 from collections import deque
 import numpy as np
+from ml_utils.utils import try_key
+from environments import SeqEnv
 
 class Runner:
-    def __init__(self, datas, hyps, gate_q, stop_q, rew_q):
+    def __init__(self, datas, hyps, gate_q, stop_q, end_q, rew_q):
         """
         hyps - dict object with all necessary hyperparameters
                 Keys (Assume string type keys):
@@ -30,6 +32,8 @@ class Runner:
                 rollouts should be collected.
         stop_q - multiprocessing queue. Used to indicate to main process that
                 a rollout has been collected.
+        end_q - multiprocessing queue. Used to indicate that
+                the experiment is finished
         rew_q - holds average reward over all processes
                 type: multiprocessing Queue
         """
@@ -38,6 +42,7 @@ class Runner:
         self.datas = datas
         self.gate_q = gate_q
         self.stop_q = stop_q
+        self.end_q = end_q
         self.rew_q = rew_q
         self.obs_deque = deque(maxlen=hyps['n_frame_stack'])
 
@@ -53,7 +58,10 @@ class Runner:
             environment.
         """
         self.net = net
-        self.env = gym.make(self.hyps['env_type'])
+        float_params = try_key(self.hyps,"float_params", dict())
+        self.env = SeqEnv(self.hyps['env_type'], self.hyps['seed'],
+                                            worker_id=None,
+                                            float_params=float_params)
         state = next_state(self.env, self.obs_deque, obs=None, reset=True, 
                                             preprocess=self.hyps['preprocess']) 
         self.state_bookmark = state
@@ -62,7 +70,7 @@ class Runner:
         for p in self.net.parameters(): # Turn off gradient collection
             p.requires_grad = False
         with torch.no_grad():
-            while True:
+            while self.end_q.empty():
                 idx = self.gate_q.get() # Opened from main process
                 self.rollout(self.net, idx, self.hyps)
                 self.stop_q.put(idx) # Signals to main process that data has been collected

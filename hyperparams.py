@@ -8,31 +8,51 @@ class HyperParams:
         
         hyp_dict = dict()
         hyp_dict['string_hyps'] = {
-                    "exp_name":"breakoutPiEmbs",
+                    "exp_name":"locgame",
+                    "seed": 121314,
                     "model_type":"conv", # Options include 'dense', 'conv', 'a3c'
-                    "env_type":"Breakout-v0", 
+                    "env_type":"~/loc_games/LocationGame2dLinux_8/LocationGame2dLinux.x86_64", 
                     "optim_type":'rmsprop', # Options: rmsprop, adam
                     "fwd_optim_type":'rmsprop', # Options: rmsprop, adam
                     "inv_optim_type":'adam', # Options: rmsprop, adam
-                    "save_folder":"/data2/pdplab/grantsrb/curioppo_saves/"
+                    "save_folder":"/media/grantsrb/curioppo_saves/"
                     }
 
         hyp_dict['int_hyps'] = {
                     "n_epochs": 3, # PPO update epoch count
-                    "batch_size": 256, # PPO update batch size
+                    "batch_size": 128, # PPO update batch size
                     "h_size": 256,
-                    "cache_batch": 256, # Batch size for cached data in forward dynamics loss
-                    "max_tsteps": int(50e6),
-                    "n_tsteps": 128, # Maximum number of tsteps per rollout per perturbed copy
-                    "n_envs": 12, # Number of parallel python processes
-                    "n_frame_stack":3, # Number of frames to stack in MDP state
+                    "cache_batch": 128, # Batch size for cached data in forward dynamics loss
+                    "max_tsteps": int(4e7),
+                    "n_tsteps": 64, # Maximum number of tsteps per rollout per perturbed copy
+                    "n_envs": 6, # Number of parallel python processes
+                    "n_frame_stack":2,# Number of frames to stack in MDP state
                     "n_rollouts": 12,
                     "n_past_rews":25,
                     "cache_size":2000,
                     "n_cache_refresh":200,
-                    "grid_size": 15,
-                    "unit_size": 4,
-                    "n_foods": 2,
+                    "grid_size":15,
+                    "unit_size":4,
+                    "n_foods":2,
+
+                    "validation":0,
+                    "visibleOrigin":1,
+                    "endAtOrigin":1,
+                    "egoCentered":0,
+                    "absoluteCoords":1,
+                    "smoothMovement":0,
+                    "restrictCamera":1,
+                    "randomizeObs":0,
+                    "specGoalObjs":0,
+                    "randObjOrder":0,
+                    "visibleTargs":0,
+                    "audibleTargs":0,
+                    "countOut":1,
+                    "visibleCount":1,
+                    "deleteTargets":1,
+                    "meritForward":1,
+                    "minObjCount":2,
+                    "maxObjCount":5,
                     }
 
         hyp_dict['float_hyps'] = {
@@ -54,6 +74,8 @@ class HyperParams:
                     "fwd_coef":.5,# Scaling factor for fwd dynamics portion of loss. range: 0-1
                     "inv_coef":.5, # Scaling factor for inverse dynamics portion of loss. range: 0-1
                     'cache_coef': .5, # Portion of inverse and forward dynamics losses from cached data. range: 0-1
+                    "minObjLoc":0.27,
+                    "maxObjLoc":0.73,
                     }
 
         hyp_dict['bool_hyps'] = {
@@ -72,7 +94,17 @@ class HyperParams:
                     "norm_rews": True,
                     "running_rew_norm": False,
                     "use_idf": False, # IDF stands for Inverse Dynamics Features
-                    "seperate_embs": False, # Uses seperate embedding model for policy and dynamics, gradients are not backpropagated in either case
+                    "seperate_embs": True, # Uses seperate embedding model for policy and dynamics, gradients are not backpropagated in either case
+                    }
+        hyp_dict["list_hyps"] = {
+                    "game_keys":["validation", "visibleOrigin", "endAtOrigin",
+                        "egoCentered", "absoluteCoords", "smoothMovement",
+                        "restrictCamera", "randomizeObs", "specGoalObjs",
+                        "randObjOrder", "visibleTargs",
+                        "audibleTargs", "minObjLoc", "maxObjLoc",
+                        "minObjCount", "maxObjCount", "countOut",
+                        "visibleCount", "deleteTargets", "meritForward"
+                        ],
                     }
         self.hyps = self.read_command_line(hyp_dict)
         if arg_hyps is not None:
@@ -110,6 +142,8 @@ class HyperParams:
             self.hyps['preprocess'] = preprocessing.snake_prep
         elif "pendulum" in env_type or "mountaincar" in env_type:
             self.hyps['preprocess'] = preprocessing.pendulum_prep
+        elif "loc" in env_type:
+            self.hyps['preprocess'] = preprocessing.center_zero2one
         else:
             self.hyps['preprocess'] = preprocessing.null_prep
 
@@ -131,6 +165,7 @@ class HyperParams:
         int_hyps = hyps_dict['int_hyps']
         float_hyps = hyps_dict['float_hyps']
         string_hyps = hyps_dict['string_hyps']
+        list_hyps = hyps_dict['list_hyps']
         
         if len(sys.argv) > 1:
             for arg in sys.argv:
@@ -145,7 +180,7 @@ class HyperParams:
                 elif sub_args[0] in int_hyps:
                     int_hyps[sub_args[0]] = int(sub_args[1])
     
-        return {**bool_hyps, **float_hyps, **int_hyps, **string_hyps}
+        return {**bool_hyps, **float_hyps, **int_hyps, **string_hyps, **list_hyps}
 
 # Methods
 
