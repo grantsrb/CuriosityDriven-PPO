@@ -8,7 +8,6 @@ import torch.nn.functional as F
 from transformer.custom_modules import *
 from transformer.models import *
 from ml_utils.utils import update_shape
-from .gru_model import CatModule
 
 class CustomModule:
     @property
@@ -181,12 +180,6 @@ class RNNLocator(LocatorBase):
         )
         if not self.discrete_env:
             self.logsigs = nn.Parameter(torch.zeros(1,self.output_space))
-
-        self.fwd_dynamics = CatModule(nn.Sequential(
-            nn.Linear(inpt_size+self.output_space, self.class_h_size),
-            globals()[self.act_fxn](),
-            nn.Linear(self.class_h_size, self.emb_size),
-        ))
 
     def fresh_h(self, batch_size=1):
         """
@@ -700,7 +693,7 @@ class SimpleDeconv(nn.Module):
     This model is used to make observation predictions. It takes in
     a single state vector and transforms it to an image (C,H,W)
     """
-    def __init__(self, emb_size, img_shape, deconv_start_shape=(512,7,7),
+    def __init__(self, emb_size, img_shape, deconv_start_shape=(None,3,3),
                                             deconv_ksizes=None,
                                             deconv_strides=None,
                                             deconv_lnorm=True,
@@ -715,7 +708,8 @@ class SimpleDeconv(nn.Module):
                                             **kwargs):
         """
         deconv_start_shape - list like [channel1, height1, width1]
-            the initial shape to reshape the embedding inputs
+            the initial shape to reshape the embedding inputs, if
+            channel1 is None, will default to embedding size
         deconv_ksizes - list like of ints
             the kernel size for each layer
         deconv_stides - list like of ints
@@ -750,6 +744,8 @@ class SimpleDeconv(nn.Module):
         """
         super().__init__()
         self.start_shape = deconv_start_shape
+        if deconv_start_shape[0] is None:
+            self.start_shape = [emb_size, *deconv_start_shape[1:]]
         self.img_shape = img_shape
         self.emb_size = emb_size
         self.drop_p = drop_p
@@ -866,7 +862,7 @@ class UpSampledDeconv(nn.Module):
     This model is used to make observation predictions. It takes in
     a single state vector and transforms it to an image (C,H,W)
     """
-    def __init__(self, emb_size, img_shape, deconv_start_shape=(512,7,7),
+    def __init__(self, emb_size, img_shape, deconv_start_shape=(512,3,3),
                                             deconv_ksizes=None,
                                             deconv_strides=None,
                                             deconv_lnorm=True,
@@ -938,12 +934,9 @@ class UpSampledDeconv(nn.Module):
         print("deconv using bnorm:", self.bnorm)
 
         if self.ksizes is None:
-            self.ksizes = [7,5,5,4,4,4,4,4,4,4]
+            self.ksizes = [7,4,4,5,5,5,5,5,4]
         if self.strides is None:
-            if self.start_shape[-1] == 7:
-                self.strides = [2,1,1,1]
-            else:
-                self.strides = [2,1,1,1]
+            self.strides = [1,1,1,1,1,1,1,2,1]
 
         modules = []
         if deconv_attn:

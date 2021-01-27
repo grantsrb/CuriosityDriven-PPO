@@ -16,7 +16,7 @@ class CatModule(nn.Module):
 
     def forward(self, x, h):
         """
-        x: FloatTensor (B,H)
+        x: FloatTensor (B,X)
         h: FloatTensor (B,H)
         """
         inpt = torch.cat([x,h],dim=-1)
@@ -45,12 +45,6 @@ class GRUModel(nn.Module):
         # Embedding Net
         self.embedder = Embedder(self.input_space, self.h_size,
                                                    self.bnorm)
-
-        # Fwd Dynamics
-        self.fwd_dynamics = CatModule(nn.Sequential(
-            nn.Linear(2*self.h_size+output_space, self.h_size), 
-            nn.ReLU(), nn.Linear(self.h_size, self.h_size), 
-            nn.ReLU(), nn.Linear(self.h_size, self.h_size)))
 
         # Recurrent Network
         self.h_init = torch.randn(1,self.h_size)

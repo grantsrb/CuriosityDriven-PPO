@@ -151,4 +151,5 @@ class Runner:
         self.datas['next_states'][endx] = cuda_if(torch.FloatTensor(state))
         self.datas['dones'][endx] = 1.
         self.state_bookmark = state
-        self.h_bookmark = h.data
+        if h is not None:
+            self.prev_h = h.data

@@ -1,6 +1,6 @@
 import sys
 import preprocessing
-from models import ConvModel, FCModel, A3CModel, InvDynamics, GRUModel, RNNLocator
+from models import ConvModel, FCModel, A3CModel, InvDynamics, GRUModel, RNNLocator, SimpleDeconv, UpSampledDeconv
 import numpy as np
 
 class HyperParams:
@@ -8,126 +8,137 @@ class HyperParams:
         
         hyp_dict = dict()
         hyp_dict['string_hyps'] = {
-                    "exp_name":"brkt",
-                    "seed": 121314,
-                    "model_type":"GRUModel",
-                    #"env_type":"~/loc_games/LocationGame2dLinux_8/LocationGame2dLinux.x86_64", 
-                    "env_type":"Breakout-v0", 
-                    "optim_type":'rmsprop', # Options: rmsprop, adam
-                    "fwd_optim_type":'rmsprop', # Options: rmsprop, adam
-                    "inv_optim_type":'adam', # Options: rmsprop, adam
-                    "save_folder":"/media/grantsrb/curioppo_saves/"
-                    }
+           "exp_name":"brkout",
+           "seed": 121314,
+           #"model_type":"RNNLocator",
+           #"env_type":"~/loc_games/LocationGame2dLinux_8/LocationGame2dLinux.x86_64", 
+           "model_type":"ConvModel",
+           "env_type":"Breakout-v0", 
+           "optim_type":'rmsprop', # Options: rmsprop, adam
+           "fwd_optim_type":'rmsprop', # Options: rmsprop, adam
+           "reconinv_optim_type":'adam', # Options: rmsprop, adam
+           "save_folder":"/media/grantsrb/curioppo_saves/"
+           }
 
         hyp_dict['int_hyps'] = {
-                    "n_epochs": 3, # PPO update epoch count
-                    "batch_size": 128, # PPO update batch size
-                    "h_size": 256,
-                    "cache_batch": 128, # Batch size for cached data in forward dynamics loss
-                    "max_tsteps": int(4e7),
-                    "n_tsteps": 64, # Maximum number of tsteps per rollout per perturbed copy
-                    "n_envs": 6, # Number of parallel python processes
-                    "n_frame_stack":2,# Number of frames to stack in MDP state
-                    "n_rollouts": 12,
-                    "n_past_rews":25,
-                    "cache_size":2000,
-                    "n_cache_refresh":200,
+           "n_epochs": 3, # PPO update epoch count
+           "batch_size": 128, # PPO update batch size
+           "h_size": 256,
+           "cache_batch": 128, # Batch size for cached data in forward dynamics loss
+           "max_tsteps": int(4e7),
+           "n_tsteps": 64, # Maximum number of tsteps per rollout per perturbed copy
+           "n_envs": 6, # Number of parallel python processes
+           "n_frame_stack":3,# Number of frames to stack in MDP state
+           "n_rollouts": 12,
+           "n_past_rews":25,
+           "cache_size":2000,
+           "n_cache_refresh":200,
 
-                    "dec_layers":3,
+           "dec_layers":3,
 
-                    "grid_size":15,
-                    "unit_size":4,
-                    "n_foods":2,
+           "grid_size":15,
+           "unit_size":4,
+           "n_foods":2,
 
-                    "validation":0,
-                    "visibleOrigin":1,
-                    "endAtOrigin":1,
-                    "egoCentered":0,
-                    "absoluteCoords":1,
-                    "smoothMovement":0,
-                    "restrictCamera":1,
-                    "randomizeObs":0,
-                    "specGoalObjs":0,
-                    "randObjOrder":0,
-                    "visibleTargs":0,
-                    "audibleTargs":0,
-                    "countOut":1,
-                    "visibleCount":1,
-                    "deleteTargets":1,
-                    "meritForward":1,
-                    "minObjCount":2,
-                    "maxObjCount":5,
-                    }
+           "validation":0,
+           "visibleOrigin":1,
+           "endAtOrigin":1,
+           "egoCentered":0,
+           "absoluteCoords":1,
+           "smoothMovement":0,
+           "restrictCamera":1,
+           "randomizeObs":0,
+           "specGoalObjs":0,
+           "randObjOrder":0,
+           "visibleTargs":0,
+           "audibleTargs":0,
+           "countOut":1,
+           "visibleCount":1,
+           "deleteTargets":1,
+           "meritForward":1,
+           "minObjCount":2,
+           "maxObjCount":5,
+           }
 
         hyp_dict['float_hyps'] = {
-                    "fwd_lr":0.00001,
-                    "inv_lr":0.0001,
-                    "lr":0.0001,
-                    "lr_low": float(1e-12),
-                    "lambda_":.95,
-                    "gamma":.99,
-                    "gamma_high":.995,
-                    "pi_coef":1,
-                    "val_coef":.005,
-                    "entr_coef":0.008,
-                    "entr_coef_low":.001,
-                    "sigma_l2":0,
-                    "max_norm":.5,
-                    "epsilon": .2, # PPO update clipping constant
-                    "epsilon_low":.05,
-                    "fwd_coef":.5,# Scaling factor for fwd dynamics portion of loss. range: 0-1
-                    "inv_coef":.5, # Scaling factor for inverse dynamics portion of loss. range: 0-1
-                    'cache_coef': .5, # Portion of inverse and forward dynamics losses from cached data. range: 0-1
-                    "minObjLoc":0.27,
-                    "maxObjLoc":0.73,
-                    }
+           "fwd_lr":0.00001,
+           "reconinv_lr":0.0001,
+           "lr":0.0001,
+           "lr_low": float(1e-12),
+           "lambda_":.95,
+           "gamma":.99,
+           "gamma_high":.995,
+           "pi_coef":1,
+           "val_coef":.005,
+           "entr_coef":0.008,
+           "entr_coef_low":.001,
+           "sigma_l2":0,
+           "max_norm":.5,
+           "epsilon": .2, # PPO update clipping constant
+           "epsilon_low":.05,
+           "fwd_coef":.5,# Scaling factor for fwd dynamics portion of loss. range: 0-1
+           "inv_coef":.5, # Scaling factor for inverse dynamics portion of loss. range: 0-1
+           'cache_coef': .5, # Portion of inverse and forward dynamics losses from cached data. range: 0-1
+           "minObjLoc":0.27,
+           "maxObjLoc":0.73,
+           }
 
         hyp_dict['bool_hyps'] = {
-                    "resume":False,
-                    "render": False, # Do not use in training scheme
-                    "clip_vals": False,
-                    "decay_eps": False,
-                    "decay_lr": False,
-                    "decay_entr": False,
-                    "incr_gamma": False,
-                    "use_nstep_rets": True,
-                    "norm_advs": True,
-                    "norm_batch_advs": False,
-                    "use_bnorm": False,
-                    "use_lnorm": True,
-                    "use_gae": True,
-                    "norm_rews": True,
-                    "running_rew_norm": False,
-                    "use_idf": False, #Inverse Dynamics Features
-                    "seperate_embs": True, # Uses seperate embedding model for policy and dynamics, gradients are not backpropagated in either case
-                    "recontstruct": False, # Add reconstruction loss to embs, only applies if separate embedding network for forward prediction
-                    }
+           "resume":False,
+           "render": False, # Do not use in training scheme
+           "clip_vals": False,
+           "decay_eps": False,
+           "decay_lr": False,
+           "decay_entr": False,
+           "incr_gamma": False,
+           "use_nstep_rets": True,
+           "norm_advs": True,
+           "norm_batch_advs": False,
+           "use_bnorm": False,
+           "use_lnorm": True,
+           "fwd_bnorm": True,
+           "use_gae": True,
+           "norm_rews": True,
+           "running_rew_norm": False,
+           "use_idf": False, #Inverse Dynamics Features
+           "seperate_embs": True, # Uses seperate embedding model for policy and dynamics, gradients are not backpropagated in either case
+           "reconstruct": False, # Add reconstruction loss to embs, only applies if separate embedding network for forward prediction
+           "full_cache_loop": False, # Will do a complete cache loop seperately from the ppo update at every ppo epoch
+           }
         hyp_dict["list_hyps"] = {
-                    "game_keys":["validation", "visibleOrigin", "endAtOrigin",
-                    "egoCentered", "absoluteCoords", "smoothMovement",
-                    "restrictCamera", "randomizeObs", "specGoalObjs",
-                    "randObjOrder", "visibleTargs",
-                    "audibleTargs", "minObjLoc", "maxObjLoc",
-                    "minObjCount", "maxObjCount", "countOut",
-                    "visibleCount", "deleteTargets", "meritForward"
-                    ] }
+           "recon_ksizes":None,
+           "game_keys":["validation", "visibleOrigin", "endAtOrigin",
+           "egoCentered", "absoluteCoords", "smoothMovement",
+           "restrictCamera", "randomizeObs", "specGoalObjs",
+           "randObjOrder", "visibleTargs",
+           "audibleTargs", "minObjLoc", "maxObjLoc",
+           "minObjCount", "maxObjCount", "countOut",
+           "visibleCount", "deleteTargets", "meritForward"
+           ] }
         self.hyps = self.read_command_line(hyp_dict)
         if arg_hyps is not None:
             for arg_key in arg_hyps.keys():
                 self.hyps[arg_key] = arg_hyps[arg_key]
 
         # Hyperparameter Manipulations
-        self.hyps['grid_size'] = [self.hyps['grid_size'],self.hyps['grid_size']]
-        if self.hyps['batch_size'] > self.hyps['n_rollouts']*self.hyps['n_tsteps']:
+        self.hyps['grid_size']=[self.hyps['grid_size'],self.hyps['grid_size']]
+        if self.hyps['batch_size']>self.hyps['n_rollouts']*self.hyps['n_tsteps']:
             self.hyps['batch_size'] = self.hyps['n_rollouts']*self.hyps['n_tsteps']
 
         # Model Type
         self.hyps['model'] = globals()[self.hyps['model_type']]
 
+        # Inverse Dynamics
         if self.hyps['use_idf']:
             self.hyps['inv_model'] = InvDynamics
         else:
             self.hyps['inv_model'] = None
+
+        # Reconstruction
+        if self.hyps['reconstruct']:
+            self.hyps['recon_model'] = UpSampledDeconv
+        else:
+            self.hyps['recon_model'] = None
 
         # Preprocessor Type
         env_type = self.hyps['env_type'].lower()
@@ -140,7 +151,7 @@ class HyperParams:
         elif "pendulum" in env_type or "mountaincar" in env_type:
             self.hyps['preprocess'] = preprocessing.pendulum_prep
         elif "loc" in env_type:
-            self.hyps['preprocess'] = preprocessing.center_zero2one
+            self.hyps['preprocess'] = preprocessing.grey_centered
         else:
             self.hyps['preprocess'] = preprocessing.null_prep
 

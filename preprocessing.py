@@ -55,9 +55,15 @@ def center_zero2one(obs):
     """
     obs = obs.astype(np.float32).transpose((2,0,1))
     obs = 3*(obs-.5)/.5
-    if len(obs.shape)==2:
-        return obs[None]
     return obs
+
+def grey_centered(obs):
+    """
+    obs: ndarray (C, H, W)
+        values must range from 0-1
+    """
+    centered = center_zero2one(obs) # (1,C,H,W)
+    return obs.mean(1).unsqueeze(1)
 
 def null_prep(pic):
     return pic[None]

@@ -4,4 +4,4 @@ from .a3c_model import A3CModel
 from .inv_dynamics import InvDynamics
 from .embedder import Embedder
 from .gru_model import GRUModel
-from .rnnlocator import RNNLocator
+from .rnnlocator import RNNLocator, SimpleDeconv, UpSampledDeconv

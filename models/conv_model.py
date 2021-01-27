@@ -31,12 +31,6 @@ class ConvModel(nn.Module):
         # Embedding Net
         self.embedder = Embedder(input_space, h_size, bnorm)
 
-        # Fwd Dynamics
-        self.fwd_dynamics = nn.Sequential(
-            nn.Linear(self.h_size+output_space, self.h_size), 
-            nn.ReLU(), nn.Linear(self.h_size, self.h_size), 
-            nn.ReLU(), nn.Linear(self.h_size, self.h_size))
-
         # Policy
         self.pre_valpi = nn.Sequential(nn.Linear(self.h_size, self.h_size), nn.ReLU())
         self.pi = nn.Linear(self.h_size, self.output_space)

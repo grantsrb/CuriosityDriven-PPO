@@ -6,6 +6,7 @@ from runner import Runner
 from updater import Updater
 from environments import SeqEnv
 import torch
+import torch.nn as nn
 from torch.autograd import Variable
 import numpy as np
 import gc
@@ -16,6 +17,7 @@ import time
 from collections import deque
 from utils import cuda_if, deque_maxmin
 from ml_utils.utils import try_key
+from models.gru_model import CatModule
 
 class CurioPPO:
     def __init__(self):
@@ -52,16 +54,22 @@ class CurioPPO:
             os.mkdir(save_folder)
         base_name = save_folder + hyps['exp_name']
         net_save_file = base_name+"_net.p"
+        fwd_save_file = base_name+"_fwd.p"
         best_net_file = base_name+"_best.p"
         optim_save_file = base_name+"_optim.p"
         fwd_optim_file = base_name+"_fwdoptim.p"
         hyps['fwd_emb_file'] = base_name+"_fwdemb.p"
         if hyps['inv_model'] is not None:
             inv_save_file = base_name+"_invnet.p"
-            inv_optim_file = base_name+"_invoptim.p"
+            reconinv_optim_file = base_name+"_reconinvoptim.p"
         else:
             inv_save_file = None
-            inv_optim_file = None
+            reconinv_optim_file = None
+        if hyps['recon_model'] is not None:
+            recon_save_file = base_name+"_reconnet.p"
+            reconinv_optim_file = base_name+"_reconinvoptim.p"
+        else:
+            recon_save_file = None
         log_file = base_name+"_log.txt"
         if hyps['resume']: log = open(log_file, 'a')
         else: log = open(log_file, 'w')
@@ -137,21 +145,44 @@ class CurioPPO:
                                                        reward_q)
             runners.append(runner)
 
-        # Make Network
+        # Make the Networks
         h_size = hyps['h_size']
         net = hyps['model'](hyps['state_shape'], action_size, h_size,
                                             bnorm=hyps['use_bnorm'],
                                             lnorm=hyps['use_lnorm'],
                                             discrete_env=hyps['discrete_env'])
+        # Fwd Dynamics
+        hyps['is_recurrent'] = hasattr(net, "fresh_h")
+        intl_size = h_size+action_size + hyps['is_recurrent']*h_size
+        fwd_net = nn.Sequential(
+            nn.Linear(intl_size, h_size), 
+            nn.ReLU(), nn.Linear(h_size, h_size), 
+            nn.ReLU(), nn.Linear(h_size, h_size))
+        if hyps['is_recurrent']:
+            # Allows us to argue an h vector along with embedding to forward func
+            fwd_net = CatModule(fwd_net) 
+        fwd_net = cuda_if(fwd_net)
+
         if hyps['inv_model'] is not None:
             inv_net = hyps['inv_model'](h_size, action_size)
             inv_net = cuda_if(inv_net)
         else:
             inv_net = None
+        if hyps['recon_model'] is not None:
+            recon_net = hyps['recon_model'](emb_size=h_size,
+                                       img_shape=hyps['state_shape'],
+                                       fwd_bnorm=hyps['fwd_bnorm'],
+                                       deconv_ksizes=hyps['recon_ksizes'])
+            recon_net = cuda_if(recon_net)
+        else:
+            recon_net = None
         if hyps['resume']:
             net.load_state_dict(torch.load(net_save_file))
+            fwd_net.load_state_dict(torch.load(fwd_save_file))
             if inv_net is not None:
                 inv_net.load_state_dict(torch.load(inv_save_file))
+            if recon_net is not None:
+                recon_net.load_state_dict(torch.load(recon_save_file))
         base_net = copy.deepcopy(net)
         net = cuda_if(net)
         net.share_memory()
@@ -170,12 +201,12 @@ class CurioPPO:
             gate_q.put(i)
 
         # Make Updater
-        updater = Updater(base_net, hyps, inv_net)
+        updater = Updater(base_net, fwd_net, hyps, inv_net, recon_net)
         if hyps['resume']:
             updater.optim.load_state_dict(torch.load(optim_save_file))
             updater.fwd_optim.load_state_dict(torch.load(fwd_optim_file))
             if inv_net is not None:
-                updater.inv_optim.load_state_dict(torch.load(inv_optim_file))
+                updater.reconinv_optim.load_state_dict(torch.load(reconinv_optim_file))
         updater.optim.zero_grad()
         updater.net.train(mode=True)
         updater.net.req_grads(True)
@@ -211,7 +242,7 @@ class CurioPPO:
                 done_count += shared_data['dones'].sum().item()
                 if avg_reward > best_avg_rew and done_count > n_rollouts:
                     best_avg_rew = avg_reward
-                    updater.save_model(best_net_file, None, None)
+                    updater.save_model(best_net_file, fwd_save_file, None, None)
 
                 # Calculate the Loss and Update nets
                 updater.update_model(shared_data)
@@ -238,7 +269,12 @@ class CurioPPO:
 
                 # Periodically save model
                 if epoch % 10 == 0:
-                    updater.save_model(net_save_file, optim_save_file, fwd_optim_file, inv_save_file, inv_optim_file)
+                    updater.save_model(net_save_file, fwd_save_file,
+                                                      optim_save_file,
+                                                      fwd_optim_file,
+                                                      inv_save_file,
+                                                      recon_save_file,
+                                                      reconinv_optim_file)
 
                 # Print Epoch Data
                 past_rews.popleft()

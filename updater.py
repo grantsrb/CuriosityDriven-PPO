@@ -19,9 +19,10 @@ class Updater():
     calc_gradients followed by update_model. If the size of the epoch is restricted by the memory, you can call calc_gradients to clear the graph.
     """
 
-    def __init__(self, net, hyps, inv_net=None): 
+    def __init__(self, net, fwd_net, hyps, inv_net=None, recon_net=None): 
         self.net = net
-        self.old_net = copy.deepcopy(self.net)
+        self.fwd_net = fwd_net
+        self.old_net = copy.deepcopy(self.net).cpu()
         self.fwd_embedder = self.net.embedder
         if hyps['seperate_embs']:
             self.fwd_embedder = copy.deepcopy(self.net.embedder)
@@ -29,17 +30,28 @@ class Updater():
                 self.fwd_embedder.load_state_dict(torch.load(hyps['fwd_emb_file']))
         self.hyps = hyps
         self.inv_net = inv_net
+        self.recon_net = recon_net
         self.gamma = hyps['gamma']
         self.lambda_ = hyps['lambda_']
         self.use_nstep_rets = hyps['use_nstep_rets']
         optim_type = hyps['optim_type']
         self.optim = self.new_optim(net.parameters(), hyps['lr'], optim_type)
         optim_type = hyps['fwd_optim_type']
-        self.fwd_optim = self.new_optim(net.fwd_dynamics.parameters(), hyps['fwd_lr'], optim_type)
+        self.fwd_optim = self.new_optim(self.fwd_net.parameters(),
+                                        hyps['fwd_lr'], optim_type)
+
+        optim_type = hyps['reconinv_optim_type']
+        params = list(self.fwd_embedder.parameters())
+        make_optim = False
         if inv_net is not None:
-            optim_type = hyps['inv_optim_type']
-            params = list(self.inv_net.parameters()) + list(self.fwd_embedder.parameters())
-            self.inv_optim = self.new_optim(params, hyps['inv_lr'], optim_type)
+            params = params + list(self.inv_net.parameters())
+            make_optim = True
+        if self.recon_net is not None:
+            params = params + list(self.recon_net.parameters())
+            make_optim = True
+        if make_optim:
+            self.reconinv_optim=self.new_optim(params, hyps['reconinv_lr'],
+                                                       optim_type)
         self.cache = None
 
         # Tracking variables
@@ -105,9 +117,9 @@ class Updater():
                 fwd_actions = actions
             fwd_inputs = torch.cat([embs.data, fwd_actions], dim=-1)
             if hyps['is_recurrent']:
-                fwd_preds = self.net.fwd_dynamics(fwd_inputs,hs.data)
+                fwd_preds = self.fwd_net(fwd_inputs,hs.data)
             else:
-                fwd_preds = self.net.fwd_dynamics(Variable(fwd_inputs))
+                fwd_preds = self.fwd_net(Variable(fwd_inputs))
             del fwd_inputs
             #just adding the last targ emb to the already calculated embs
             targets = self.fwd_embedder(next_states, next_hs)
@@ -116,8 +128,9 @@ class Updater():
             rewards = rewards.view(len(fwd_preds),-1).mean(-1).data
         self.fwd_embedder.train()
         self.net.train()
-        # Bootstrapped value predictions are added within the make_advs_and_rets fxn
-        # in the case of using the discounted rewards for the returns
+        # Bootstrapped value predictions are added within the
+        # make_advs_and_rets fxn in the case of using the discounted
+        # rewards for the returns
         del targets
         del fwd_preds
         if hyps['norm_rews'] or hyps['running_rew_norm']:
@@ -154,58 +167,103 @@ class Updater():
         avg_epoch_inv_loss = 0
         self.net.train(mode=True)
         self.net.req_grads(True)
-        self.fwd_embedder.req_grads(self.inv_net is not None)
-        self.old_net.load_state_dict(self.net.state_dict())
-        self.old_net.train(mode=True)
+        req_grad = self.inv_net is not None or self.recon_net is not None
+        self.fwd_embedder.req_grads(req_grad)
+        cuda_if(self.old_net).load_state_dict(self.net.state_dict())
+        self.old_net.train()
         self.old_net.req_grads(False)
+        with torch.no_grad():
+            if self.hyps['is_recurrent']:
+                old_vals,old_raw_pis,_ = self.old_net(states, h=hs)
+            else:
+                old_vals, old_raw_pis = self.old_net(states)
+            self.old_net.cpu()
+        sep_cache_loop = self.cache is not None and hyps['full_cache_loop']
         self.optim.zero_grad()
         for epoch in range(hyps['n_epochs']):
-            loss, epoch_loss, epoch_policy_loss, epoch_val_loss, epoch_entropy = 0,0,0,0,0
-            epoch_fwd_loss = 0
-            epoch_inv_loss = 0
-            indices = torch.randperm(len(states)).long()
-            if self.cache is not None:
-                cache_len = len(self.cache['states'])
-                cache_idxs = torch.randperm(cache_len).long()
+            epoch_cache_fwd = 0
+            epoch_cache_inv = 0
 
-            for i in range(len(indices)//hyps['batch_size']):
-                # Get data for batch
-                startdx = i*hyps['batch_size']
-                endx = (i+1)*hyps['batch_size']
-                idxs = indices[startdx:endx]
-                batch_data = states[idxs],next_states[idxs],actions[idxs],advantages[idxs],returns[idxs],hs[idxs],next_hs[idxs]
-
-                # Optional forward dynamics memory replay
-                if self.cache is not None and i*hyps['cache_batch']<cache_len:
+            # Optional forward dynamics memory replay
+            cache_len = len(self.cache['states'])
+            cache_idxs = torch.randperm(cache_len).long()
+            if sep_cache_loop:
+                bsize = hyps['cache_batch']
+                n_loops = cache_len//bsize
+                for i in range(n_loops):
+                    cachxs = cache_idxs[i*bsize:(i+1)*bsize]
                     cache_batch = []
-                    cachxs = cache_idxs[i*hyps['cache_batch']:(i+1)*hyps['cache_batch']]
                     cache_batch.append(self.cache['states'][cachxs])
                     cache_batch.append(self.cache['next_states'][cachxs])
                     cache_batch.append(self.cache['actions'][cachxs])
                     cache_batch.append(self.cache['hs'][cachxs])
                     cache_batch.append(self.cache['next_hs'][cachxs])
-                    fwd_cache_loss,inv_cache_loss = self.cache_losses(*cache_batch)
-                else:
-                    fwd_cache_loss = cuda_if(Variable(torch.zeros(1)))
-                    inv_cache_loss = cuda_if(Variable(torch.zeros(1)))
+                    loss_tup = self.cache_losses(*cache_batch)
+                    fwd_cache_loss,inv_cache_loss = loss_tup
+                    loss = fwd_cache_loss + inv_cache_loss
+                    loss.backward()
+                    self.fwd_optim.step()
+                    self.fwd_optim.zero_grad()
+                    if self.inv_net is not None or self.recon_net is not None:
+                        self.reconinv_optim.step()
+                        self.reconinv_optim.zero_grad()
+                    epoch_cache_fwd += fwd_cache_loss.item()
+                    epoch_cache_inv += inv_cache_loss.item()
+                epoch_cache_fwd /= n_loops
+                epoch_cache_inv /= n_loops
 
+            loss,epoch_loss,epoch_policy_loss,epoch_val_loss,epoch_entropy= 0,0,0,0,0
+            epoch_fwd_loss = 0
+            epoch_inv_loss = 0
+            # PPO Loss
+            indices = torch.randperm(len(states)).long()
+            bsize = hyps['batch_size']
+            cbsize = hyps['cache_batch']
+            n_loops = len(indices)//hyps['batch_size']
+            for i in range(n_loops):
+                # Get data for batch
+                startdx =  i*bsize
+                endx = (i+1)*bsize
+                idxs = indices[startdx:endx]
+
+                if not sep_cache_loop and cache_len > (i+1)*cbsize:
+                    cachxs = cache_idxs[i*cbsize:(i+1)*cbsize]
+                    cache_batch = []
+                    cache_batch.append(self.cache['states'][cachxs])
+                    cache_batch.append(self.cache['next_states'][cachxs])
+                    cache_batch.append(self.cache['actions'][cachxs])
+                    cache_batch.append(self.cache['hs'][cachxs])
+                    cache_batch.append(self.cache['next_hs'][cachxs])
+                    loss_tup = self.cache_losses(*cache_batch)
+                    fwd_cache_loss,inv_cache_loss = loss_tup
+                else:
+                    fwd_cache_loss = cuda_if(torch.zeros(1))
+                    inv_cache_loss = cuda_if(torch.zeros(1))
+
+                batch_data = [states[idxs],next_states[idxs],
+                              actions[idxs],advantages[idxs],
+                              returns[idxs],hs[idxs],next_hs[idxs],
+                              old_vals[idxs],old_raw_pis[idxs]]
                 # Total Loss
-                policy_loss, val_loss, entropy, fwd_loss, inv_loss = self.ppo_losses(*batch_data)
-                inv_term = hyps['cache_coef']*inv_cache_loss + (1-hyps['cache_coef'])*inv_loss
-                inv_term *= hyps['inv_coef']
-                ppo_term = (1-hyps['fwd_coef'])*(policy_loss + val_loss - entropy + inv_term)
-                fwd_term = hyps['cache_coef']*fwd_cache_loss + (1-hyps['cache_coef'])*fwd_loss
-                fwd_term = hyps['fwd_coef']*fwd_term
-                #loss = ppo_term + fwd_term + inv_loss
-                loss = ppo_term + fwd_term
+                loss_tup = self.ppo_losses(*batch_data)
+                policy_loss,val_loss,entropy,fwd_loss,inv_loss = loss_tup
+
+                ppo_term = (1-hyps['fwd_coef'])*(policy_loss + val_loss - entropy)
+                fwd_term = hyps['fwd_coef']*fwd_loss + hyps['cache_coef']*fwd_cache_loss
+                inv_term = hyps['inv_coef']*inv_loss + hyps['cache_coef']*inv_cache_loss
+                loss = ppo_term + fwd_term + inv_loss
+                #loss = ppo_term + fwd_term
 
                 # Gradient Step
-                using_idf = self.inv_net is not None
-                #loss.backward(retain_graph=use_idf)
                 loss.backward()
-                if using_idf:
-                    _ = nn.utils.clip_grad_norm_(self.inv_net.parameters(), hyps['max_norm'])
-                self.norm = nn.utils.clip_grad_norm_(self.net.parameters(), hyps['max_norm'])
+                if self.inv_net is not None:
+                    _ = nn.utils.clip_grad_norm_(self.inv_net.parameters(),
+                                                 hyps['max_norm'])
+                if self.recon_net is not None:
+                    _ = nn.utils.clip_grad_norm_(self.recon_net.parameters(),
+                                                 hyps['max_norm'])
+                self.norm = nn.utils.clip_grad_norm_(self.net.parameters(),
+                                                 hyps['max_norm'])
 
                 # Important to do fwd optim step first! This is because the fwd parameters are
                 # in the regular optimizer as well
@@ -213,15 +271,9 @@ class Updater():
                 self.fwd_optim.zero_grad()
                 self.optim.step()
                 self.optim.zero_grad()
-                if using_idf:
-                    self.inv_optim.step()
-                    self.inv_optim.zero_grad()
-                #if use_idf:
-                #    inv_term = (1-hyps['inv_coef'])*inv_cache_loss + hyps['inv_coef']*inv_loss
-                #    inv_term.backward()
-                #    _ = nn.utils.clip_grad_norm_(self.inv_net.parameters(), hyps['max_norm'])
-                #    self.inv_optim.step()
-                #    self.inv_optim.zero_grad()
+                if self.inv_net is not None or self.recon_net is not None:
+                    self.reconinv_optim.step()
+                    self.reconinv_optim.zero_grad()
                 epoch_loss += float(loss.item())
                 epoch_policy_loss += policy_loss.item()
                 epoch_val_loss += val_loss.item()
@@ -229,12 +281,14 @@ class Updater():
                 epoch_inv_loss += inv_term.item()
                 epoch_entropy += entropy.item()
 
-            avg_epoch_loss += epoch_loss/hyps['n_epochs']
-            avg_epoch_policy_loss += epoch_policy_loss/hyps['n_epochs']
-            avg_epoch_val_loss += epoch_val_loss/hyps['n_epochs']
-            avg_epoch_entropy += epoch_entropy/hyps['n_epochs']
-            avg_epoch_fwd_loss += epoch_fwd_loss/hyps['n_epochs']
-            avg_epoch_inv_loss += epoch_inv_loss/hyps['n_epochs']
+            avg_epoch_loss +=        epoch_loss/hyps['n_epochs']/n_loops
+            avg_epoch_policy_loss+=epoch_policy_loss/hyps['n_epochs']/n_loops
+            avg_epoch_val_loss += epoch_val_loss/hyps['n_epochs']/n_loops
+            avg_epoch_entropy +=  epoch_entropy/hyps['n_epochs']/n_loops
+            avg_epoch_fwd_loss += epoch_fwd_loss/hyps['n_epochs']/2/n_loops
+            avg_epoch_fwd_loss += epoch_cache_fwd/hyps['n_epochs']/2/n_loops
+            avg_epoch_inv_loss += epoch_inv_loss/hyps['n_epochs']/2/n_loops
+            avg_epoch_inv_loss += epoch_cache_inv/hyps['n_epochs']/2/n_loops
 
         self.info = {"Loss":float(avg_epoch_loss), 
                     "PiLoss":float(avg_epoch_policy_loss), 
@@ -271,11 +325,21 @@ class Updater():
         
         embs = self.fwd_embedder(states, hs)
         fwd_targs = self.fwd_embedder(next_states, next_hs)
+
+        # Inverse Dynamics Loss
         if self.inv_net is not None:
             inv_preds = self.inv_net(torch.cat([embs, fwd_targs], dim=-1))
             inv_loss = F.cross_entropy(inv_preds, Variable(cuda_if(actions)))
         else:
             inv_loss = Variable(cuda_if(torch.zeros(1)))
+
+        # Reconstruction Loss
+        if self.recon_net is not None:
+            recons = self.recon_net(embs)
+            recon_loss = F.mse_loss(recons, states)
+        else:
+            recon_loss = cuda_if(torch.zeros(1))
+
         embs.detach(), fwd_targs.detach()
         if self.hyps['discrete_env']:
             fwd_actions = self.one_hot_encode(actions, self.net.output_space)
@@ -283,16 +347,18 @@ class Updater():
             fwd_actions = actions
         fwd_inputs = torch.cat([embs.data, cuda_if(fwd_actions)], dim=-1)
         if self.hyps['is_recurrent']:
-            fwd_preds = self.net.fwd_dynamics(fwd_inputs, hs.data)
+            fwd_preds = self.fwd_net(fwd_inputs, hs.data)
         else:
-            fwd_preds = self.net.fwd_dynamics(fwd_inputs)
+            fwd_preds = self.fwd_net(fwd_inputs)
         fwd_loss = F.mse_loss(fwd_preds, fwd_targs.data)
-        return fwd_loss, inv_loss
+        return fwd_loss, inv_loss+recon_loss
 
     def ppo_losses(self, states, next_states, actions, advs,
                                                        rets,
                                                        hs,
-                                                       next_hs):
+                                                       next_hs,
+                                                       old_vals,
+                                                       old_raw_pis):
         """
         Completes the ppo specific loss approach
 
@@ -310,6 +376,10 @@ class Updater():
             minibatch of recurrent states (batch_size,)
         next_hs - torch FloatTensor
             minibatch of the next recurrent states (batch_size,)
+        old_vals: torch FloatTensor (B,)
+            the old network's value predictions
+        old_raw_pis: torch FloatTensor (B,A)
+            the old network's policy predictions
 
         Returns:
             policy_loss - the PPO CLIP policy gradient shape (1,)
@@ -322,12 +392,8 @@ class Updater():
         # Get Outputs
         if hyps['is_recurrent']:
             vals,raw_pis,_ = self.net(states,hs)
-            with torch.no_grad():
-                old_vals,old_raw_pis,_ = self.old_net(states, h=hs)
         else:
             vals, raw_pis = self.net(Variable(states))
-            with torch.no_grad():
-                old_vals, old_raw_pis = self.old_net(Variable(states))
 
         if hyps['norm_batch_advs']:
             advs = (advs - advs.mean())
@@ -384,15 +450,20 @@ class Updater():
             val_loss = Variable(cuda_if(torch.zeros(1)))
 
 
-        # Inv Dynamics Loss
         embs = self.fwd_embedder(states, hs)
         next_embs = self.fwd_embedder(next_states, next_hs)
+        # Inv Dynamics Loss
         if self.inv_net is not None:
             inv_inputs = torch.cat([embs, next_embs], dim=-1) # Backprop into embeddings
             inv_preds = self.inv_net(inv_inputs)
             inv_loss = F.cross_entropy(inv_preds, Variable(cuda_if(actions)))
         else:
             inv_loss = Variable(cuda_if(torch.zeros(1)))
+        # Reconstruction Loss
+        if self.recon_net is not None:
+            recons = self.recon_net(embs)
+            recon_loss = F.mse_loss(recons, states.data)
+            inv_loss += recon_loss
 
         # Fwd Dynamics Loss
         if self.hyps['discrete_env']:
@@ -401,9 +472,9 @@ class Updater():
             fwd_actions = actions
         fwd_inputs = torch.cat([embs.data, cuda_if(fwd_actions)], dim=-1)
         if hyps['is_recurrent']:
-            fwd_preds = self.net.fwd_dynamics(fwd_inputs,hs.data)
+            fwd_preds = self.fwd_net(fwd_inputs,hs.data)
         else:
-            fwd_preds = self.net.fwd_dynamics(Variable(fwd_inputs))
+            fwd_preds = self.fwd_net(Variable(fwd_inputs))
         fwd_loss = F.mse_loss(fwd_preds, Variable(next_embs.data))
 
         return policy_loss, val_loss, entropy, fwd_loss, inv_loss
@@ -545,19 +616,31 @@ class Updater():
         log.write("Step:"+str(T)+" – "+" – ".join([key+": "+str(round(val,5)) if "ntropy" not in key else key+": "+str(val) for key,val in self.info.items()]+["EpRew: "+str(reward), "AvgAction: "+str(avg_action), "BestRew:"+str(best_avg_rew)]) + '\n')
         log.flush()
 
-    def save_model(self, net_file_name, optim_file, fwd_optim_file, inv_save_file=None, inv_optim_file=None):
+    def save_model(self, net_file_name, fwd_save_file, optim_file,
+                                                 fwd_optim_file,
+                                                 inv_save_file=None,
+                                                 recon_save_file=None,
+                                                 reconinv_optim_file=None):
         """
         Saves the state dict of the model to file.
 
         file_name - string name of the file to save the state_dict to
         """
         torch.save(self.net.state_dict(), net_file_name)
+        torch.save(self.fwd_net.state_dict(), fwd_save_file)
         if optim_file is not None:
             torch.save(self.optim.state_dict(), optim_file)
             torch.save(self.fwd_optim.state_dict(), fwd_optim_file)
+            save_optim = False
             if inv_save_file is not None and self.inv_net is not None:
                 torch.save(self.inv_net.state_dict(), inv_save_file)
-                torch.save(self.inv_optim.state_dict(), inv_optim_file)
+                save_optim = True
+            if recon_save_file is not None and self.recon_net is not None:
+                torch.save(self.recon_net.state_dict(), recon_save_file)
+                save_optim = True
+            if save_optim and reconinv_optim_file is not None:
+                torch.save(self.reconinv_optim.state_dict(),
+                                        reconinv_optim_file)
     
     def new_lr(self, new_lr):
         optim_type = self.hyps['optim_type']
@@ -567,7 +650,8 @@ class Updater():
 
     def new_fwd_lr(self, new_lr):
         optim_type = self.hyps['fwd_optim_type']
-        new_optim = self.new_optim(self.net.fwd_dynamics.parameters(), new_lr, optim_type)
+        new_optim = self.new_optim(self.fwd_net.parameters(),
+                                          new_lr, optim_type)
         new_optim.load_state_dict(self.optim.state_dict())
         self.fwd_optim = new_optim
 
