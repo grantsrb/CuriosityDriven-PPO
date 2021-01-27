@@ -108,14 +108,20 @@ class CurioPPO:
         del env
 
         # Prepare Shared Variables
-        shared_data = {'states': cuda_if(torch.zeros(shared_len, *hyps['state_shape']).share_memory_()),
-                'next_states': cuda_if(torch.zeros(shared_len, *hyps['state_shape']).share_memory_()),
-                'dones': cuda_if(torch.zeros(shared_len).share_memory_())}
+        shared_data = {
+            'states': torch.zeros(shared_len,
+                                *hyps['state_shape']).share_memory_(),
+            'next_states': torch.zeros(shared_len,
+                                *hyps['state_shape']).share_memory_(),
+            'dones':torch.zeros(shared_len).share_memory_(),
+            'hs':torch.zeros(shared_len,hyps['h_size']).share_memory_(),
+            'next_hs':torch.zeros(shared_len,hyps['h_size']).share_memory_()}
         if hyps['discrete_env']:
-            shared_data['actions'] = cuda_if(torch.zeros(shared_len).long().share_memory_())
+            shared_data['actions'] = torch.zeros(shared_len).long().share_memory_()
         else:
             shape = (shared_len, action_size)
-            shared_data['actions'] = cuda_if(torch.zeros(shape).float().share_memory_())
+            shared_data['actions']=torch.zeros(shape).float().share_memory_()
+        shared_data = {k: cuda_if(v) for k,v in shared_data.items()}
         n_rollouts = hyps['n_rollouts']
         gate_q = mp.Queue(n_rollouts)
         stop_q = mp.Queue(n_rollouts)
@@ -135,6 +141,7 @@ class CurioPPO:
         h_size = hyps['h_size']
         net = hyps['model'](hyps['state_shape'], action_size, h_size,
                                             bnorm=hyps['use_bnorm'],
+                                            lnorm=hyps['use_lnorm'],
                                             discrete_env=hyps['discrete_env'])
         if hyps['inv_model'] is not None:
             inv_net = hyps['inv_model'](h_size, action_size)
@@ -149,6 +156,7 @@ class CurioPPO:
         net = cuda_if(net)
         net.share_memory()
         base_net = cuda_if(base_net)
+        hyps['is_recurrent'] = hasattr(net, "fresh_h")
 
         # Start Data Collection
         print("Making New Processes")

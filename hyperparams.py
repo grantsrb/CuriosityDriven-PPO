@@ -1,6 +1,6 @@
 import sys
 import preprocessing
-from models import ConvModel, FCModel, A3CModel, InvDynamics
+from models import ConvModel, FCModel, A3CModel, InvDynamics, GRUModel, RNNLocator
 import numpy as np
 
 class HyperParams:
@@ -8,10 +8,11 @@ class HyperParams:
         
         hyp_dict = dict()
         hyp_dict['string_hyps'] = {
-                    "exp_name":"locgame",
+                    "exp_name":"brkt",
                     "seed": 121314,
-                    "model_type":"conv", # Options include 'dense', 'conv', 'a3c'
-                    "env_type":"~/loc_games/LocationGame2dLinux_8/LocationGame2dLinux.x86_64", 
+                    "model_type":"GRUModel",
+                    #"env_type":"~/loc_games/LocationGame2dLinux_8/LocationGame2dLinux.x86_64", 
+                    "env_type":"Breakout-v0", 
                     "optim_type":'rmsprop', # Options: rmsprop, adam
                     "fwd_optim_type":'rmsprop', # Options: rmsprop, adam
                     "inv_optim_type":'adam', # Options: rmsprop, adam
@@ -31,6 +32,9 @@ class HyperParams:
                     "n_past_rews":25,
                     "cache_size":2000,
                     "n_cache_refresh":200,
+
+                    "dec_layers":3,
+
                     "grid_size":15,
                     "unit_size":4,
                     "n_foods":2,
@@ -90,22 +94,23 @@ class HyperParams:
                     "norm_advs": True,
                     "norm_batch_advs": False,
                     "use_bnorm": False,
+                    "use_lnorm": True,
                     "use_gae": True,
                     "norm_rews": True,
                     "running_rew_norm": False,
-                    "use_idf": False, # IDF stands for Inverse Dynamics Features
+                    "use_idf": False, #Inverse Dynamics Features
                     "seperate_embs": True, # Uses seperate embedding model for policy and dynamics, gradients are not backpropagated in either case
+                    "recontstruct": False, # Add reconstruction loss to embs, only applies if separate embedding network for forward prediction
                     }
         hyp_dict["list_hyps"] = {
                     "game_keys":["validation", "visibleOrigin", "endAtOrigin",
-                        "egoCentered", "absoluteCoords", "smoothMovement",
-                        "restrictCamera", "randomizeObs", "specGoalObjs",
-                        "randObjOrder", "visibleTargs",
-                        "audibleTargs", "minObjLoc", "maxObjLoc",
-                        "minObjCount", "maxObjCount", "countOut",
-                        "visibleCount", "deleteTargets", "meritForward"
-                        ],
-                    }
+                    "egoCentered", "absoluteCoords", "smoothMovement",
+                    "restrictCamera", "randomizeObs", "specGoalObjs",
+                    "randObjOrder", "visibleTargs",
+                    "audibleTargs", "minObjLoc", "maxObjLoc",
+                    "minObjCount", "maxObjCount", "countOut",
+                    "visibleCount", "deleteTargets", "meritForward"
+                    ] }
         self.hyps = self.read_command_line(hyp_dict)
         if arg_hyps is not None:
             for arg_key in arg_hyps.keys():
@@ -117,15 +122,7 @@ class HyperParams:
             self.hyps['batch_size'] = self.hyps['n_rollouts']*self.hyps['n_tsteps']
 
         # Model Type
-        model_type = self.hyps['model_type'].lower()
-        if "conv" == model_type:
-            self.hyps['model'] = ConvModel
-        elif "a3c" == model_type:
-            self.hyps['model'] = A3CModel
-        elif "fc" == model_type or "dense" == model_type:
-            self.hyps['model'] = FCModel
-        else:
-            self.hyps['model'] = ConvModel
+        self.hyps['model'] = globals()[self.hyps['model_type']]
 
         if self.hyps['use_idf']:
             self.hyps['inv_model'] = InvDynamics

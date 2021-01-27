@@ -10,6 +10,6 @@ class InvDynamics(nn.Module):
                                     nn.Linear(h_size, h_size), nn.ReLU(),
                                     nn.Linear(h_size, action_size))
 
-    def forward(self, x):
+    def forward(self, x, *args, **kwargs):
         return self.inv_dyn(x)
 

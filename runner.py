@@ -28,6 +28,7 @@ class Runner:
                     "next_states" - Collects the MDP states at timestep t+1
                     "dones" - Collects the dones collected at each timestep t
                     "actions" - Collects actions performed at each timestep t
+                    "hs" - Collects recurrent states at each timestep t
         gate_q - multiprocessing queue. Allows main process to control when
                 rollouts should be collected.
         stop_q - multiprocessing queue. Used to indicate to main process that
@@ -45,6 +46,7 @@ class Runner:
         self.end_q = end_q
         self.rew_q = rew_q
         self.obs_deque = deque(maxlen=hyps['n_frame_stack'])
+        self.prev_h = None
 
     def run(self, net):
         """
@@ -94,13 +96,25 @@ class Runner:
                                 creation of the mdp state
                     "preprocess" - function to preprocess raw observations
         """
+        net.eval()
         hyps = self.hyps
         state = self.state_bookmark
         n_tsteps = hyps['n_tsteps']
+        is_recurrent = hasattr(net, "fresh_h")
+        if not is_recurrent:
+            h = None
+        else:
+            h = self.prev_h if self.prev_h is not None else net.fresh_h()
         startx = idx*n_tsteps
         for i in range(n_tsteps):
             self.datas['states'][startx+i] = cuda_if(torch.FloatTensor(state))
-            val, logits = net(self.datas['states'][startx+i][None])
+            if is_recurrent:
+                self.datas["hs"][startx+i] = cuda_if(h.detach().data)
+                val,logits,h = net(self.datas['states'][startx+i][None],
+                                   h=self.datas['hs'][startx+i][None])
+                self.datas["next_hs"][startx+i] = cuda_if(h.detach().data)
+            else:
+                val, logits = net(self.datas['states'][startx+i][None])
             if self.hyps['discrete_env']:
                 probs = F.softmax(logits, dim=-1)
                 action = sample_action(probs.data)
@@ -137,3 +151,4 @@ class Runner:
         self.datas['next_states'][endx] = cuda_if(torch.FloatTensor(state))
         self.datas['dones'][endx] = 1.
         self.state_bookmark = state
+        self.h_bookmark = h.data

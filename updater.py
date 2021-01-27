@@ -74,33 +74,48 @@ class Updater():
                     "actions" - Collects actions performed at each timestep t
                             type: LongTensor
                             shape: (n_states,)
+                    "hs" - Collects recurrent state vectors at each timestep t
+                            type: FloatTensor
+                            shape: (n_states,h_size)
         """
+        torch.cuda.empty_cache()
         self.update_count += 1
         hyps = self.hyps
         states = shared_data['states']
         next_states = shared_data['next_states']
         actions = shared_data['actions']
         dones = shared_data['dones']
+        hs = shared_data['hs']
+        next_hs = shared_data['next_hs']
 
-        self.update_cache(shared_data)
+        cache_keys = ['actions', 'states', 'next_states', "hs", "next_hs"]
+        self.update_cache(shared_data, cache_keys)
 
         # Make rewards
         self.net.req_grads(False)
         self.fwd_embedder.req_grads(False)
+        self.fwd_embedder.eval()
+        self.net.eval()
         with torch.no_grad():
-            embs = self.fwd_embedder(Variable(states))
+            embs = self.fwd_embedder(states,hs)
             if self.hyps['discrete_env']:
                 fwd_actions = cuda_if(self.one_hot_encode(actions,
                                            self.net.output_space))
             else:
                 fwd_actions = actions
             fwd_inputs = torch.cat([embs.data, fwd_actions], dim=-1)
-            fwd_preds = self.net.fwd_dynamics(Variable(fwd_inputs))
+            if hyps['is_recurrent']:
+                fwd_preds = self.net.fwd_dynamics(fwd_inputs,hs.data)
+            else:
+                fwd_preds = self.net.fwd_dynamics(Variable(fwd_inputs))
             del fwd_inputs
-            targets = torch.cat([embs.data[1:], self.fwd_embedder(Variable(next_states[-1:])).data], dim=0)
+            #just adding the last targ emb to the already calculated embs
+            targets = self.fwd_embedder(next_states, next_hs)
             del embs
             rewards = F.mse_loss(fwd_preds, targets, reduction="none")
             rewards = rewards.view(len(fwd_preds),-1).mean(-1).data
+        self.fwd_embedder.train()
+        self.net.train()
         # Bootstrapped value predictions are added within the make_advs_and_rets fxn
         # in the case of using the discounted rewards for the returns
         del targets
@@ -118,10 +133,13 @@ class Updater():
         self.min_rew = min(rewards.min().item(), self.min_rew)
 
         if hyps['use_gae']:
-            advantages, returns = self.make_advs_and_rets(states,
+            with torch.no_grad():
+                advantages, returns = self.make_advs_and_rets(states,
                                                           next_states,
                                                           rewards,
-                                                          dones)
+                                                          dones,
+                                                          hs,
+                                                          next_hs)
         else:
             # No bootstrapped values added when using this option
             advantages = self.discount(rewards, dones, hyps['gamma'])
@@ -155,16 +173,18 @@ class Updater():
                 startdx = i*hyps['batch_size']
                 endx = (i+1)*hyps['batch_size']
                 idxs = indices[startdx:endx]
-                batch_data = states[idxs],next_states[idxs],actions[idxs],advantages[idxs],returns[idxs]
+                batch_data = states[idxs],next_states[idxs],actions[idxs],advantages[idxs],returns[idxs],hs[idxs],next_hs[idxs]
 
                 # Optional forward dynamics memory replay
-                if self.cache is not None and i*hyps['cache_batch'] < cache_len:
+                if self.cache is not None and i*hyps['cache_batch']<cache_len:
+                    cache_batch = []
                     cachxs = cache_idxs[i*hyps['cache_batch']:(i+1)*hyps['cache_batch']]
-                    cache_states = self.cache['states'][cachxs]
-                    cache_next_states = self.cache['next_states'][cachxs]
-                    cache_actions = self.cache['actions'][cachxs]
-                    cache_batch = cache_states, cache_next_states, cache_actions
-                    fwd_cache_loss, inv_cache_loss = self.cache_losses(*cache_batch)
+                    cache_batch.append(self.cache['states'][cachxs])
+                    cache_batch.append(self.cache['next_states'][cachxs])
+                    cache_batch.append(self.cache['actions'][cachxs])
+                    cache_batch.append(self.cache['hs'][cachxs])
+                    cache_batch.append(self.cache['next_hs'][cachxs])
+                    fwd_cache_loss,inv_cache_loss = self.cache_losses(*cache_batch)
                 else:
                     fwd_cache_loss = cuda_if(Variable(torch.zeros(1)))
                     inv_cache_loss = cuda_if(Variable(torch.zeros(1)))
@@ -232,18 +252,25 @@ class Updater():
         self.max_minsurr, self.min_minsurr = -1e10, 1e10
         self.max_rew, self.min_rew = -1e15, 1e15
 
-    def cache_losses(self, states, next_states, actions):
+    def cache_losses(self, states, next_states, actions, hs, next_hs):
         """
         Creates a loss term from historical data to avoid forgetting
         within the forward dynamics model.
 
-        states - torch FloatTensor minibatch of states with shape (batch_size, C, H, W)
-        next_states - torch FloatTensor minibatch of next states with shape (batch_size, C, H, W)
-        actions - torch LongTensor minibatch of empirical actions with shape (batch_size,)
+        states - torch FloatTensor
+            minibatch of states with shape (batch_size, C, H, W)
+        next_states - torch FloatTensor
+            minibatch of next states with shape (batch_size, C, H, W)
+        actions - torch LongTensor or FloatTensor
+            minibatch of empirical actions with shape (batch_size,)
+        hs - torch FloatTensor or None (B,H)
+            minibatch of recurrent state vectors at time t 
+        hs - torch FloatTensor or None (B,H)
+            minibatch of recurrent state vectors at t+1
         """
         
-        embs = self.fwd_embedder(Variable(states))
-        fwd_targs = self.fwd_embedder(Variable(next_states))
+        embs = self.fwd_embedder(states, hs)
+        fwd_targs = self.fwd_embedder(next_states, next_hs)
         if self.inv_net is not None:
             inv_preds = self.inv_net(torch.cat([embs, fwd_targs], dim=-1))
             inv_loss = F.cross_entropy(inv_preds, Variable(cuda_if(actions)))
@@ -255,19 +282,34 @@ class Updater():
         else:
             fwd_actions = actions
         fwd_inputs = torch.cat([embs.data, cuda_if(fwd_actions)], dim=-1)
-        fwd_preds = self.net.fwd_dynamics(Variable(fwd_inputs))
-        fwd_loss = F.mse_loss(fwd_preds, Variable(fwd_targs.data))
+        if self.hyps['is_recurrent']:
+            fwd_preds = self.net.fwd_dynamics(fwd_inputs, hs.data)
+        else:
+            fwd_preds = self.net.fwd_dynamics(fwd_inputs)
+        fwd_loss = F.mse_loss(fwd_preds, fwd_targs.data)
         return fwd_loss, inv_loss
 
-    def ppo_losses(self, states, next_states, actions, advs, rets):
+    def ppo_losses(self, states, next_states, actions, advs,
+                                                       rets,
+                                                       hs,
+                                                       next_hs):
         """
         Completes the ppo specific loss approach
 
-        states - torch FloatTensor minibatch of states with shape (batch_size, C, H, W)
-        next_states - torch FloatTensor minibatch of next states with shape (batch_size, C, H, W)
-        actions - torch LongTensor minibatch of empirical actions with shape (batch_size,)
-        advs - torch FloatTensor minibatch of empirical advantages with shape (batch_size,)
-        rets - torch FloatTensor minibatch of empirical returns with shape (batch_size,)
+        states - torch FloatTensor
+            minibatch of states with shape (batch_size, C, H, W)
+        next_states - torch FloatTensor
+            minibatch of next states with shape (batch_size, C, H, W)
+        actions - torch LongTensor
+            minibatch of empirical actions with shape (batch_size,)
+        advs - torch FloatTensor 
+            minibatch of empirical advantages with shape (batch_size,)
+        rets - torch FloatTensor
+            minibatch of empirical returns with shape (batch_size,)
+        hs - torch FloatTensor
+            minibatch of recurrent states (batch_size,)
+        next_hs - torch FloatTensor
+            minibatch of the next recurrent states (batch_size,)
 
         Returns:
             policy_loss - the PPO CLIP policy gradient shape (1,)
@@ -278,9 +320,14 @@ class Updater():
         hyps = self.hyps
 
         # Get Outputs
-        vals, raw_pis = self.net(Variable(states))
-        with torch.no_grad():
-            old_vals, old_raw_pis = self.old_net(Variable(states))
+        if hyps['is_recurrent']:
+            vals,raw_pis,_ = self.net(states,hs)
+            with torch.no_grad():
+                old_vals,old_raw_pis,_ = self.old_net(states, h=hs)
+        else:
+            vals, raw_pis = self.net(Variable(states))
+            with torch.no_grad():
+                old_vals, old_raw_pis = self.old_net(Variable(states))
 
         if hyps['norm_batch_advs']:
             advs = (advs - advs.mean())
@@ -338,8 +385,8 @@ class Updater():
 
 
         # Inv Dynamics Loss
-        embs = self.fwd_embedder(Variable(states))
-        next_embs = self.fwd_embedder(Variable(next_states))
+        embs = self.fwd_embedder(states, hs)
+        next_embs = self.fwd_embedder(next_states, next_hs)
         if self.inv_net is not None:
             inv_inputs = torch.cat([embs, next_embs], dim=-1) # Backprop into embeddings
             inv_preds = self.inv_net(inv_inputs)
@@ -353,7 +400,10 @@ class Updater():
         else:
             fwd_actions = actions
         fwd_inputs = torch.cat([embs.data, cuda_if(fwd_actions)], dim=-1)
-        fwd_preds = self.net.fwd_dynamics(Variable(fwd_inputs))
+        if hyps['is_recurrent']:
+            fwd_preds = self.net.fwd_dynamics(fwd_inputs,hs.data)
+        else:
+            fwd_preds = self.net.fwd_dynamics(Variable(fwd_inputs))
         fwd_loss = F.mse_loss(fwd_preds, Variable(next_embs.data))
 
         return policy_loss, val_loss, entropy, fwd_loss, inv_loss
@@ -387,7 +437,10 @@ class Updater():
         one_hots[torch.arange(0,len(idxs)).long(), idxs] = 1
         return one_hots
 
-    def make_advs_and_rets(self, states, next_states, rewards, dones):
+    def make_advs_and_rets(self, states, next_states, rewards,
+                                                      dones,
+                                                      hs,
+                                                      next_hs):
         """
         Creates the advantages and returns.
 
@@ -401,12 +454,20 @@ class Updater():
         """
 
         self.net.req_grads(False)
-        vals, raw_pis = self.net(Variable(states))
-        next_vals, _ = self.net(Variable(next_states))
+        if self.hyps['is_recurrent']:
+            vals, raw_pis,_ = self.net(Variable(states), hs)
+            next_vals, _,_ = self.net(Variable(next_states), next_hs)
+        else:
+            vals, raw_pis = self.net(Variable(states))
+            next_vals, _ = self.net(Variable(next_states))
         self.net.req_grads(True)
 
         # Make Advantages
-        advantages = self.gae(rewards.squeeze(), vals.data.squeeze(), next_vals.data.squeeze(), dones.squeeze(), self.gamma, self.lambda_)
+        advantages = self.gae(rewards.squeeze(),vals.data.squeeze(),
+                                                next_vals.data.squeeze(),
+                                                dones.squeeze(),
+                                                self.gamma,
+                                                self.lambda_)
 
         # Make Returns
         if self.use_nstep_rets: 
@@ -454,8 +515,7 @@ class Updater():
             discounts[i] = running_sum
         return discounts
 
-    def update_cache(self, shared_data):
-        keys = ['actions', 'states', 'next_states']
+    def update_cache(self, shared_data, keys):
         if self.cache is None:
             self.cache = dict()
             for key in keys:

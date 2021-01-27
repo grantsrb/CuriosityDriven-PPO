@@ -71,7 +71,7 @@ class Embedder(nn.Module):
     def new_size(self, shape, ksize, padding, stride):
         return (shape - ksize + 2*padding)//stride + 1
 
-    def forward(self, state):
+    def forward(self, state, *args, **kwargs):
         """
         Creates an embedding for the state.
 
@@ -182,7 +182,7 @@ class FCEmbedder(nn.Module):
 
         self.features = nn.Sequential(*modules)
 
-    def forward(self, state):
+    def forward(self, state, *args, **kwargs):
         """
         Creates an embedding for the state.
 

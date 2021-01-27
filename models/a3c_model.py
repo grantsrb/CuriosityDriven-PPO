@@ -7,7 +7,8 @@ import numpy as np
 class A3CModel(nn.Module):
     def __init__(self, input_space, output_space, h_size=256,
                                                   bnorm=False,
-                                                  discrete_env=True):
+                                                  discrete_env=True,
+                                                  **kwargs):
         super(Model, self).__init__()
 
         self.input_space = input_space
@@ -53,7 +54,7 @@ class A3CModel(nn.Module):
         shape[-3] = depth
         return shape
 
-    def forward(self, x, bnorm=False):
+    def forward(self, x, bnorm=False, *args, **kwargs):
         embs = self.encoder(x)
         val, pi = self.policy(embs, bnorm=bnorm)
         return val, pi

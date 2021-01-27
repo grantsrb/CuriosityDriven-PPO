@@ -18,7 +18,8 @@ class ConvModel(nn.Module):
 
     def __init__(self, input_space, output_space, h_size=200,
                                                   bnorm=False,
-                                                  discrete_env=True):
+                                                  discrete_env=True,
+                                                  **kwargs):
         super(ConvModel, self).__init__()
 
         self.input_space = input_space
@@ -52,7 +53,7 @@ class ConvModel(nn.Module):
     def new_size(self, shape, ksize, padding, stride):
         return (shape - ksize + 2*padding)//stride + 1
 
-    def forward(self, x):
+    def forward(self, x, *args, **kwargs):
         embs = self.embeddings(x)
         val, pi = self.val_pi(embs)
         return val, pi
