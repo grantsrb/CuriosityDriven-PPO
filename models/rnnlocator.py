@@ -382,7 +382,7 @@ class MediumCNN(CNNBase):
         self.shapes = []
         shape = self.img_shape[-2:]
         self.shapes.append(shape)
-        chans = [32,64,128,self.emb_size]
+        chans = [16,32,64,128,self.emb_size]
         stride = 2
         ksize = 7
         self.chans = chans
