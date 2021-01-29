@@ -8,13 +8,11 @@ class HyperParams:
         
         hyp_dict = dict()
         hyp_dict['string_hyps'] = {
-           "exp_name":"brksepemb",
+           "exp_name":"locgame",
            "seed": 121314,
-           #"model_type":"RNNLocator",
-           #"env_type":"~/loc_games/LocationGame2dLinux_8/LocationGame2dLinux.x86_64", 
+           "env_type":"~/loc_games/LocationGame2dLinux_8/LocationGame2dLinux.x86_64", 
            "model_type":"RNNLocator",
            "fwd_emb_type":"Embedder",
-           "env_type":"Breakout-v0", 
            "optim_type":'rmsprop', # Options: rmsprop, adam
            "fwd_optim_type":'rmsprop', # Options: rmsprop, adam
            "reconinv_optim_type":'adam', # Options: rmsprop, adam
@@ -24,10 +22,10 @@ class HyperParams:
         hyp_dict['int_hyps'] = {
            "n_epochs": 3, # PPO update epoch count
            "batch_size": 128, # PPO update batch size
-           "h_size": 256,
+           "h_size": 512,
            "cache_batch": 128, # Batch size for cached data in forward dynamics loss
            "max_tsteps": int(4e7),
-           "n_tsteps": 64, # Maximum number of tsteps per rollout per perturbed copy
+           "n_tsteps": 96, # Maximum number of tsteps per rollout per perturbed copy
            "n_envs": 6, # Number of parallel python processes
            "n_frame_stack":3,# Number of frames to stack in MDP state
            "n_rollouts": 12,
@@ -152,7 +150,7 @@ class HyperParams:
             self.hyps['preprocess'] = preprocessing.snake_prep
         elif "pendulum" in env_type or "mountaincar" in env_type:
             self.hyps['preprocess'] = preprocessing.pendulum_prep
-        elif "loc" in env_type:
+        elif "locationgame" in env_type:
             self.hyps['preprocess'] = preprocessing.grey_centered
         else:
             self.hyps['preprocess'] = preprocessing.null_prep

@@ -1189,3 +1189,15 @@ class Cutout(nn.Module):
             half_diff = (x.shape[-1]-self.cut_width)//2
             x = x[...,half_diff:half_diff+self.cut_width]
         return x
+
+class Flatten(nn.Module):
+    """
+    Reshapes the activations to be of shape (B,-1) where B
+    is the batch size
+    """
+    def __init__(self):
+        super(Flatten, self).__init__()
+
+    def forward(self, x):
+        return x.view(x.shape[0], -1)
+

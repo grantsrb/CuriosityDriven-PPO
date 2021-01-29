@@ -62,8 +62,9 @@ def grey_centered(obs):
     obs: ndarray (C, H, W)
         values must range from 0-1
     """
-    centered = center_zero2one(obs) # (1,C,H,W)
-    return obs.mean(1).unsqueeze(1)
+    centered = center_zero2one(obs) # (C,H,W)
+    obs = centered.mean(0)[None]
+    return obs
 
 def null_prep(pic):
     return pic[None]

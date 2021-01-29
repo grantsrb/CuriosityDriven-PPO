@@ -246,10 +246,15 @@ class Updater():
                     fwd_cache_loss = cuda_if(torch.zeros(1))
                     inv_cache_loss = cuda_if(torch.zeros(1))
 
+                if not self.hyps['discrete_env']:
+                    mu, sig = old_raw_pis
+                    old_pis = (mu[idxs], sig[idxs])
+                else:
+                    old_pis = old_raw_pis[idxs]
                 batch_data = [states[idxs],next_states[idxs],
                               actions[idxs],advantages[idxs],
                               returns[idxs],hs[idxs],next_hs[idxs],
-                              old_vals[idxs],old_raw_pis[idxs]]
+                              old_vals[idxs],old_pis]
                 # Total Loss
                 loss_tup = self.ppo_losses(*batch_data)
                 policy_loss,val_loss,entropy,fwd_loss,inv_loss = loss_tup

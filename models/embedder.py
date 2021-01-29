@@ -3,10 +3,28 @@ from torch.autograd import Variable
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+from .rnnlocator import MediumCNN, SimpleCNN, Flatten
 
-'''
-Simple, sequential convolutional net.
-'''
+
+#class ConvEmbedder(nn.Module):
+#    def __init__(self, input_space, h_size, bnorm=False, **kwargs):
+#        super().__init__()
+#        self.input_space = input_space
+#        self.h_size = h_size
+#        self.bnorm = bnorm
+#        
+#        cnn = MediumCNN(img_shape=self.input_space,
+#                                  emb_size=self.h_size,
+#                                  feat_bnorm=self.bnorm)
+#        self.features = nn.Sequential(cnn, Flatten())
+#        self.flat_size = int(cnn.seq_len*self.h_size)
+#        print("Flat Features Size:", self.flat_size)
+#
+#        block = [nn.Linear(self.flat_size, self.h_size)]
+#        #block.append(nn.ReLU())
+#        self.resize_emb = nn.Sequential(*block)
+#
+#    def
 
 class Embedder(nn.Module):
 
