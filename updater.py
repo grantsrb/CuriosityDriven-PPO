@@ -25,7 +25,13 @@ class Updater():
         self.old_net = copy.deepcopy(self.net).cpu()
         self.fwd_embedder = self.net.embedder
         if hyps['seperate_embs']:
-            self.fwd_embedder = copy.deepcopy(self.net.embedder)
+            if "fwd_emb_model" in hyps and hyps['fwd_emb_model'] is not None:
+                args = {**hyps}
+                args['bnorm'] = hyps['fwd_bnorm']
+                args['input_space'] = args['state_shape']
+                self.fwd_embedder = cuda_if(hyps['fwd_emb_model'](**args))
+            else:
+                self.fwd_embedder = copy.deepcopy(self.net.embedder)
             if hyps['resume']:
                 self.fwd_embedder.load_state_dict(torch.load(hyps['fwd_emb_file']))
         self.hyps = hyps

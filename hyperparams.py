@@ -1,6 +1,6 @@
 import sys
 import preprocessing
-from models import ConvModel, FCModel, A3CModel, InvDynamics, GRUModel, RNNLocator, SimpleDeconv, UpSampledDeconv
+from models import ConvModel, FCModel, A3CModel, InvDynamics, GRUModel, RNNLocator, SimpleDeconv, UpSampledDeconv, Embedder
 import numpy as np
 
 class HyperParams:
@@ -8,11 +8,12 @@ class HyperParams:
         
         hyp_dict = dict()
         hyp_dict['string_hyps'] = {
-           "exp_name":"brkout",
+           "exp_name":"brksepemb",
            "seed": 121314,
            #"model_type":"RNNLocator",
            #"env_type":"~/loc_games/LocationGame2dLinux_8/LocationGame2dLinux.x86_64", 
-           "model_type":"ConvModel",
+           "model_type":"RNNLocator",
+           "fwd_emb_type":"Embedder",
            "env_type":"Breakout-v0", 
            "optim_type":'rmsprop', # Options: rmsprop, adam
            "fwd_optim_type":'rmsprop', # Options: rmsprop, adam
@@ -127,6 +128,7 @@ class HyperParams:
 
         # Model Type
         self.hyps['model'] = globals()[self.hyps['model_type']]
+        self.hyps['fwd_emb_model'] = globals()[self.hyps['fwd_emb_type']]
 
         # Inverse Dynamics
         if self.hyps['use_idf']:

@@ -15,7 +15,7 @@ class Embedder(nn.Module):
             tobj = tobj.cuda()
         return tobj
 
-    def __init__(self, input_space, h_size=200, bnorm=False):
+    def __init__(self, input_space, h_size=200, bnorm=False, **kwargs):
         super(Embedder, self).__init__()
 
         self.input_space = input_space
@@ -160,7 +160,7 @@ class FCEmbedder(nn.Module):
             tobj = tobj.cuda()
         return tobj
 
-    def __init__(self, input_space, h_size=200, bnorm=False):
+    def __init__(self, input_space, h_size=200, bnorm=False, **kwargs):
         super().__init__()
 
         self.input_space = input_space
