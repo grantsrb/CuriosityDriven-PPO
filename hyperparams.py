@@ -95,7 +95,8 @@ class HyperParams:
            "norm_batch_advs": False,
            "use_bnorm": False,
            "use_lnorm": True,
-           "fwd_bnorm": True,
+           "fwd_bnorm": True, # Only is different than use_bnorm if separate_embs is true and fwd_emb_type is not Null
+           "fwd_lnorm": True, # Only is different than use_lnorm if separate_embs is true and fwd_emb_type is not Null
            "use_gae": True,
            "norm_rews": True,
            "running_rew_norm": False,
