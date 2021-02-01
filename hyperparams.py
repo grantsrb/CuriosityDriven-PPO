@@ -1,6 +1,6 @@
 import sys
 import preprocessing
-from models import ConvModel, FCModel, A3CModel, InvDynamics, GRUModel, RNNLocator, SimpleDeconv, UpSampledDeconv, Embedder
+from models import ConvModel, FCModel, A3CModel, InvDynamics, GRUModel, RNNLocator, SimpleDeconv, UpSampledDeconv, Embedder, ConvEmbedder
 import numpy as np
 
 class HyperParams:
@@ -8,11 +8,11 @@ class HyperParams:
         
         hyp_dict = dict()
         hyp_dict['string_hyps'] = {
-           "exp_name":"locgame",
+           "exp_name":"locconvemb",
            "seed": 121314,
            "env_type":"~/loc_games/LocationGame2dLinux_8/LocationGame2dLinux.x86_64", 
            "model_type":"RNNLocator",
-           "fwd_emb_type":"Embedder",
+           "fwd_emb_type":"ConvEmbedder",
            "optim_type":'rmsprop', # Options: rmsprop, adam
            "fwd_optim_type":'rmsprop', # Options: rmsprop, adam
            "reconinv_optim_type":'adam', # Options: rmsprop, adam
@@ -101,7 +101,7 @@ class HyperParams:
            "running_rew_norm": False,
            "use_idf": False, #Inverse Dynamics Features
            "seperate_embs": True, # Uses seperate embedding model for policy and dynamics, gradients are not backpropagated in either case
-           "reconstruct": False, # Add reconstruction loss to embs, only applies if separate embedding network for forward prediction
+           "reconstruct": True, # Add reconstruction loss to embs, only applies if separate embedding network for forward prediction
            "full_cache_loop": False, # Will do a complete cache loop seperately from the ppo update at every ppo epoch
            }
         hyp_dict["list_hyps"] = {

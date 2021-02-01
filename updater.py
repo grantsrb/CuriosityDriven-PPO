@@ -28,6 +28,7 @@ class Updater():
             if "fwd_emb_model" in hyps and hyps['fwd_emb_model'] is not None:
                 args = {**hyps}
                 args['bnorm'] = hyps['fwd_bnorm']
+                args['lnorm'] = hyps['fwd_lnorm']
                 args['input_space'] = args['state_shape']
                 self.fwd_embedder = cuda_if(hyps['fwd_emb_model'](**args))
             else:

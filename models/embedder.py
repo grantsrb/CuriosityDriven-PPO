@@ -6,39 +6,63 @@ import numpy as np
 from .rnnlocator import MediumCNN, SimpleCNN, Flatten
 
 
-#class ConvEmbedder(nn.Module):
-#    def __init__(self, input_space, h_size, bnorm=False, **kwargs):
-#        super().__init__()
-#        self.input_space = input_space
-#        self.h_size = h_size
-#        self.bnorm = bnorm
-#        
-#        cnn = MediumCNN(img_shape=self.input_space,
-#                                  emb_size=self.h_size,
-#                                  feat_bnorm=self.bnorm)
-#        self.features = nn.Sequential(cnn, Flatten())
-#        self.flat_size = int(cnn.seq_len*self.h_size)
-#        print("Flat Features Size:", self.flat_size)
-#
-#        block = [nn.Linear(self.flat_size, self.h_size)]
-#        #block.append(nn.ReLU())
-#        self.resize_emb = nn.Sequential(*block)
-#
-#    def
+class ConvEmbedder(nn.Module):
+    def __init__(self, input_space, h_size=200, bnorm=False,
+                                                lnorm=False,
+                                                **kwargs):
+        super().__init__()
+        self.input_space = input_space
+        self.h_size = h_size
+        self.bnorm = bnorm
+        self.lnorm = lnorm
+        
+        self.features = MediumCNN(img_shape=self.input_space,
+                                  emb_size=self.h_size,
+                                  feat_bnorm=self.bnorm)
+        self.flat_size = int(self.features.seq_len*self.h_size)
+        print("Flat Features Size:", self.flat_size)
+
+        block = [Flatten()]
+        if self.lnorm:
+            bloc.append(nn.LayerNorm(self.flat_size))
+        block.append(nn.Linear(self.flat_size, self.h_size))
+        self.resize_emb = nn.Sequential(*block)
+
+    def forward(self, x, *args, **kwargs):
+        """
+        Inputs:
+            x: float tensor (B, C, H, W)
+
+        Outputs:
+            FloatTensor (B,E)
+        """
+        feats = self.features(x)
+        return self.resize_emb(feats)
+
+    def req_grads(self, calc_bool):
+        """
+        An on-off switch for the requires_grad parameter for each internal Parameter.
+
+        calc_bool - Boolean denoting whether gradients should be calculated.
+        """
+        for param in self.parameters():
+            param.requires_grad = calc_bool
 
 class Embedder(nn.Module):
-
     def cuda_if(self, tobj):
         if torch.cuda.is_available():
             tobj = tobj.cuda()
         return tobj
 
-    def __init__(self, input_space, h_size=200, bnorm=False, **kwargs):
+    def __init__(self, input_space, h_size=200, bnorm=False, 
+                                                lnorm=False,
+                                                **kwargs):
         super(Embedder, self).__init__()
 
         self.input_space = input_space
         self.h_size = h_size
         self.bnorm = bnorm
+        self.lnorm = lnorm
 
         self.convs = nn.ModuleList([])
 
@@ -76,7 +100,10 @@ class Embedder(nn.Module):
         self.flat_size = int(np.prod(shape))
         print("Flat Features Size:", self.flat_size)
 
-        block = [nn.Linear(self.flat_size, self.h_size)] 
+        block = []
+        if self.lnorm:
+            block = [nn.LayerNorm(self.flat_size)]
+        block.append(nn.Linear(self.flat_size, self.h_size))
         #block.append(nn.ReLU())
         self.resize_emb = nn.Sequential(*block)
 
@@ -178,13 +205,16 @@ class FCEmbedder(nn.Module):
             tobj = tobj.cuda()
         return tobj
 
-    def __init__(self, input_space, h_size=200, bnorm=False, **kwargs):
+    def __init__(self, input_space, h_size=200, bnorm=False,
+                                                lnorm=False,
+                                                **kwargs):
         super().__init__()
 
         self.input_space = input_space
         self.flat_size = int(np.prod(input_space))
         self.h_size = h_size
         self.bnorm = bnorm
+        self.lnorm = lnorm
         
         modules = []
         modules.append(nn.Linear(self.flat_size,h_size))
@@ -195,6 +225,8 @@ class FCEmbedder(nn.Module):
         if bnorm:
             modules.append(nn.BatchNorm1d(h_size))
         modules.append(nn.ReLU())
+        if self.lnorm:
+            modules.append(nn.LayerNorm(self.h_size))
         modules.append(nn.Linear(self.h_size,h_size))
         #modules.append(nn.ReLU())
 

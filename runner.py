@@ -129,6 +129,7 @@ class Runner:
             if hyps['render']:
                 self.env.render()
             self.ep_rew += rew
+            self.datas['rews'][startx+i] = float(rew)
             reset = done
             if "Pong" in hyps['env_type'] and rew != 0:
                 done = True
@@ -153,3 +154,93 @@ class Runner:
         self.state_bookmark = state
         if h is not None:
             self.prev_h = h.data
+
+class StatsRunner(Runner):
+    def __init__(self, env, hyps):
+        """
+        hyps - dict object with all necessary hyperparameters
+                Keys (Assume string type keys):
+                    "gamma" - reward decay coeficient
+                    "n_tsteps" - number of steps to be taken in the
+                                environment
+                    "n_frame_stack" - number of frames to stack for
+                                creation of the mdp state
+                    "preprocess" - function to preprocess raw observations
+                    "env_type" - type of gym environment to be interacted 
+                                with. Follows OpenAI's gym api.
+        """
+        self.hyps = hyps
+        self.env = env
+        self.obs_deque = deque(maxlen=hyps['n_frame_stack'])
+        self.prev_h = None
+
+    def run(self, net):
+        """
+        run is the entry function to begin collecting rollouts from the
+        environment using the specified net. gate_q indicates when to begin
+        collecting a rollout and is controlled from the main process.
+        The stop_q is used to indicate to the main process that a new rollout
+        has been collected.
+
+        net - torch Module object. This is the model to interact with the
+            environment.
+        """
+        self.net = net
+        with torch.no_grad():
+            return self.rollout(self.net)
+
+    def rollout(self, net):
+        """
+        rollout handles the actual rollout of the environment for n
+        steps in time.
+
+        net - torch Module object. This is the model to interact with the
+            environment.
+        """
+        net.eval()
+        state = next_state(self.env, self.obs_deque,
+                                     obs=None,
+                                     reset=True, 
+                                     preprocess=self.hyps['preprocess'])
+        ep_rew = 0
+        hyps = self.hyps
+        is_recurrent = hasattr(net, "fresh_h")
+        if not is_recurrent:
+            h = None
+        else:
+            h = net.fresh_h()
+        t = 0
+        episode_count = 1
+        while t <= 400:
+            t+=1
+            state = cuda_if(torch.FloatTensor(state))
+            if is_recurrent:
+                val,logits,h = net(state[None],
+                                   h=cuda_if(h.detach().data))
+            else:
+                val, logits = net(state[None])
+            if self.hyps['discrete_env']:
+                probs = F.softmax(logits, dim=-1)
+                action = sample_action(probs.data)
+                action = int(action.item())
+            else:
+                mu,sig = logits
+                action = mu + torch.randn_like(sig)*sig
+                action = action.cpu().detach().numpy().squeeze()
+                if len(action.shape) == 0:
+                    action = np.asarray([float(action)])
+            obs, rew, done, info = self.env.step(action+hyps['action_shift'])
+            if hyps['render']:
+                self.env.render()
+            ep_rew += rew
+            reset = done
+            if "Pong" in hyps['env_type'] and rew != 0:
+                done = True
+            if done:
+                episode_count += 1
+
+            state = next_state(self.env, self.obs_deque,
+                                         obs=obs,
+                                         reset=reset, 
+                                         preprocess=hyps['preprocess'])
+        return ep_rew/episode_count, ep_rew/t

@@ -2,7 +2,7 @@ import os
 import sys
 import gym
 from logger import Logger
-from runner import Runner
+from runner import Runner, StatsRunner
 from updater import Updater
 from environments import SeqEnv
 import torch
@@ -122,6 +122,7 @@ class CurioPPO:
             'next_states': torch.zeros(shared_len,
                                 *hyps['state_shape']).share_memory_(),
             'dones':torch.zeros(shared_len).share_memory_(),
+            'rews':torch.zeros(shared_len).share_memory_(),
             'hs':torch.zeros(shared_len,hyps['h_size']).share_memory_(),
             'next_hs':torch.zeros(shared_len,hyps['h_size']).share_memory_()}
         if hyps['discrete_env']:
@@ -221,7 +222,11 @@ class CurioPPO:
         past_rews = deque([0]*hyps['n_past_rews'])
         last_avg_rew = 0
         best_rew_diff = 0
-        best_avg_rew = -100
+        best_avg_rew = -10000
+        best_eval_rew = -10000
+        ep_eval_rew = 0
+        eval_rew = 0
+
         epoch = 0
         done_count = 0
         T = 0
@@ -240,9 +245,30 @@ class CurioPPO:
                 reward_q.put(avg_reward)
                 last_avg_rew = avg_reward
                 done_count += shared_data['dones'].sum().item()
+                new_best = False
                 if avg_reward > best_avg_rew and done_count > n_rollouts:
+                    new_best = True
                     best_avg_rew = avg_reward
-                    updater.save_model(best_net_file, fwd_save_file, None, None)
+                    updater.save_model(best_net_file, fwd_save_file,
+                                                         None, None)
+                eval_rew = shared_data['rews'].mean()
+                if eval_rew > best_eval_rew:
+                    best_eval_rew = eval_rew
+                    save_names = [net_save_file, fwd_save_file,
+                                                 optim_save_file,
+                                                 fwd_optim_file,
+                                                 inv_save_file,
+                                                 recon_save_file,
+                                                 reconinv_optim_file]
+
+                    for i in range(len(save_names)):
+                        if save_names[i] is not None:
+                            splt = save_names[i].split(".")
+                            splt[0] = splt[0]+"_best"
+                            save_names[i] = ".".join(splt)
+                    updater.save_model(*save_names)
+                s = "EvalRew: {:.5f} | BestEvalRew: {:.5f}"
+                print(s.format(eval_rew, best_eval_rew))
 
                 # Calculate the Loss and Update nets
                 updater.update_model(shared_data)
@@ -268,7 +294,7 @@ class CurioPPO:
                     print("New Gamma:", updater.gamma)
 
                 # Periodically save model
-                if epoch % 10 == 0:
+                if epoch % 10 == 0 or epoch == 1:
                     updater.save_model(net_save_file, fwd_save_file,
                                                       optim_save_file,
                                                       fwd_optim_file,
@@ -291,6 +317,7 @@ class CurioPPO:
                 print("Avg Rew:", avg_reward, "– High:", max_rew, "– Low:", min_rew, end='\n')
                 updater.log_statistics(log, T, avg_reward, avg_action, best_avg_rew)
                 updater.info['AvgRew'] = avg_reward
+                updater.info['EvalRew'] = eval_rew
                 logger.append(updater.info, x_val=T)
 
                 # Check for memory leaks
