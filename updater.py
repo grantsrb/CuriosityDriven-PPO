@@ -107,8 +107,12 @@ class Updater():
         hs = shared_data['hs']
         next_hs = shared_data['next_hs']
 
+        ## Fwd Net BPTT
+        #bptt_loss, fwd_hs = self.fwd_bptt(shared_data)
+
         cache_keys = ['actions', 'states', 'next_states', "hs", "next_hs"]
         self.update_cache(shared_data, cache_keys)
+
 
         # Make rewards
         self.net.req_grads(False)
@@ -675,3 +679,43 @@ class Updater():
         else:
             new_optim = optim.RMSprop(params, lr=lr) 
         return new_optim
+
+    #def fwd_bptt(self, datas):
+    #    """
+    #    Func used to backprop through the recurrence in the forward
+    #    dynamics model.
+    #    """
+    #    hyps = self.hyps
+    #    states = datas['states']
+    #    actions = datas['actions']
+    #    dones = datas['dones']
+
+    #    og_len = len(states)
+    #    n_rollouts, n_tsteps = hyps['n_rollouts'], hyps['n_tsteps']
+    #    states = states.reshape(n_rollouts,n_tsteps,*states.shape[1:])
+    #    if len(actions.shape) == 1:
+    #        actions = actions.reshape(n_rollouts, n_tsteps)
+    #    else:
+    #        actions = actions.reshape(n_rollouts, n_tsteps,
+    #                                              *actions.shape[1:])
+    #    dones = dones.reshape(n_rollouts, n_tsteps)
+
+    #    # TODO: Collect reliable starting hs
+    #    # (beware of n_envs vs n_rollouts problem)
+    #    # TODO: make fresh h func
+    #    h_init = self.fwd_net.fresh_h(n_rollouts)
+    #    h = self.prev_fwd_h
+
+    #    for step in 
+
+
+
+
+
+
+
+
+
+
+
+

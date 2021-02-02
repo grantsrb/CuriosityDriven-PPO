@@ -8,11 +8,12 @@ class HyperParams:
         
         hyp_dict = dict()
         hyp_dict['string_hyps'] = {
-           "exp_name":"locconvemb",
+           "exp_name":"locemb",
            "seed": 121314,
-           "env_type":"~/loc_games/LocationGame2dLinux_8/LocationGame2dLinux.x86_64", 
+           #"env_type":"~/loc_games/LocationGame2dLinux_8/LocationGame2dLinux.x86_64", 
+           "env_type":"Breakout-v0", 
            "model_type":"RNNLocator",
-           "fwd_emb_type":"ConvEmbedder",
+           "fwd_emb_type":"Embedder",
            "optim_type":'rmsprop', # Options: rmsprop, adam
            "fwd_optim_type":'rmsprop', # Options: rmsprop, adam
            "reconinv_optim_type":'adam', # Options: rmsprop, adam
@@ -96,12 +97,13 @@ class HyperParams:
            "use_bnorm": False,
            "use_lnorm": True,
            "fwd_bnorm": True,
+           "fwd_lnorm": True,
            "use_gae": True,
            "norm_rews": True,
            "running_rew_norm": False,
            "use_idf": False, #Inverse Dynamics Features
            "seperate_embs": True, # Uses seperate embedding model for policy and dynamics, gradients are not backpropagated in either case
-           "reconstruct": True, # Add reconstruction loss to embs, only applies if separate embedding network for forward prediction
+           "reconstruct": False, # Add reconstruction loss to embs, only applies if separate embedding network for forward prediction
            "full_cache_loop": False, # Will do a complete cache loop seperately from the ppo update at every ppo epoch
            }
         hyp_dict["list_hyps"] = {

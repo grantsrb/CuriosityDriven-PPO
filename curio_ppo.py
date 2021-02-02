@@ -155,12 +155,15 @@ class CurioPPO:
         # Fwd Dynamics
         hyps['is_recurrent'] = hasattr(net, "fresh_h")
         intl_size = h_size+action_size + hyps['is_recurrent']*h_size
-        fwd_net = nn.Sequential(
-            nn.Linear(intl_size, h_size), 
+        if hyps['fwd_lnorm']:
+            block = [nn.LayerNorm(intl_size)]
+        block = [nn.Linear(intl_size, h_size), 
             nn.ReLU(), nn.Linear(h_size, h_size), 
-            nn.ReLU(), nn.Linear(h_size, h_size))
+            nn.ReLU(), nn.Linear(h_size, h_size)]
+        fwd_net = nn.Sequential(*block)
+        # Allows us to argue an h vector along with embedding to
+        # forward func
         if hyps['is_recurrent']:
-            # Allows us to argue an h vector along with embedding to forward func
             fwd_net = CatModule(fwd_net) 
         fwd_net = cuda_if(fwd_net)
 
