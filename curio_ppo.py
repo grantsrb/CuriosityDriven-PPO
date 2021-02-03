@@ -17,7 +17,7 @@ import time
 from collections import deque
 from utils import cuda_if, deque_maxmin
 from ml_utils.utils import try_key
-from models.gru_model import CatModule
+from models.embedder import CatModule, Ensemble
 
 class CurioPPO:
     def __init__(self):
@@ -165,6 +165,8 @@ class CurioPPO:
         # forward func
         if hyps['is_recurrent']:
             fwd_net = CatModule(fwd_net) 
+        if hyps['ensemble']:
+            fwd_net = Ensemble(fwd_net)
         fwd_net = cuda_if(fwd_net)
 
         if hyps['inv_model'] is not None:

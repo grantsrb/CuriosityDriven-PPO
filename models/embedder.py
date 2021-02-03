@@ -249,3 +249,39 @@ class FCEmbedder(nn.Module):
         for param in self.parameters():
             param.requires_grad = calc_bool
 
+class Ensemble(nn.Module):
+    def __init__(self, net, n_nets=3):
+        """
+        net: Module
+            the architecture to use for the ensemble
+        n_nets: int
+            the total number of networks in the ensemble
+        """
+        super().__init__()
+        self.nets = nn.ModuleList([])
+        for _ in range(n_copies):
+            new_net = copy.deepcopy(net)
+            for name,modu in new_net.named_modules():
+                if isinstance(modu, nn.Conv2d) or isinstance(modu, nn.Linear):
+                    nn.init.xavier_uniform(modu.weight)
+            self.nets.append(new_net)
+
+    def forward(self, x, h=None, **kwargs):
+        preds = []
+        for net in self.nets:
+            preds.append(net(x,h))
+        return preds
+
+class CatModule(nn.Module):
+    def __init__(self, modu):
+        super().__init__()
+        self.modu = modu
+
+    def forward(self, x, h):
+        """
+        x: FloatTensor (B,X)
+        h: FloatTensor (B,H)
+        """
+        inpt = torch.cat([x,h],dim=-1)
+        return self.modu(inpt)
+

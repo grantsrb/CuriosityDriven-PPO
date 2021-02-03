@@ -195,7 +195,7 @@ class RNNLocator(LocatorBase):
         """
         if h is None:
             h = self.h
-        h = self.layer_norm(h)
+        h = self.layer_norm(h) # This could be a null operation
         if self.fixed_h:
             h = self.reset_h(len(x))
         feat = self.embedder(x,h)

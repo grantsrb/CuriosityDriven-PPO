@@ -132,18 +132,22 @@ class Updater():
             else:
                 fwd_preds = self.fwd_net(Variable(fwd_inputs))
             del fwd_inputs
-            #just adding the last targ emb to the already calculated embs
-            targets = self.fwd_embedder(next_states, next_hs)
-            del embs
-            rewards = F.mse_loss(fwd_preds, targets, reduction="none")
-            rewards = rewards.view(len(fwd_preds),-1).mean(-1).data
+            if hyps['ensemble']:
+                rewards = torch.stack(fwd_preds,dim=0).std(0).mean(-1)
+                del embs
+            else:
+                #just adding the last targ emb to the already calculated embs
+                targets = self.fwd_embedder(next_states, next_hs)
+                del embs
+                rewards = F.mse_loss(fwd_preds, targets, reduction="none")
+                rewards = rewards.view(len(fwd_preds),-1).mean(-1).data
+                del targets
+            del fwd_preds
         self.fwd_embedder.train()
         self.net.train()
         # Bootstrapped value predictions are added within the
         # make_advs_and_rets fxn in the case of using the discounted
         # rewards for the returns
-        del targets
-        del fwd_preds
         if hyps['norm_rews'] or hyps['running_rew_norm']:
             if self.rew_mu is None or not hyps['running_rew_norm']:
                 self.rew_mu,self.rew_sig = rewards.mean(),rewards.std()
@@ -366,7 +370,12 @@ class Updater():
             fwd_preds = self.fwd_net(fwd_inputs, hs.data)
         else:
             fwd_preds = self.fwd_net(fwd_inputs)
-        fwd_loss = F.mse_loss(fwd_preds, fwd_targs.data)
+        if self.hyps['ensemble']:
+            fwd_loss = F.mse_loss(fwd_preds[0], fwd_targs.data)
+            for i in range(1, len(fwd_preds)):
+                fwd_loss += F.mse_loss(fwd_preds[i], fwd_targs.data)
+        else:
+            fwd_loss = F.mse_loss(fwd_preds, fwd_targs.data)
         return fwd_loss, inv_loss+recon_loss
 
     def ppo_losses(self, states, next_states, actions, advs,
@@ -491,7 +500,12 @@ class Updater():
             fwd_preds = self.fwd_net(fwd_inputs,hs.data)
         else:
             fwd_preds = self.fwd_net(Variable(fwd_inputs))
-        fwd_loss = F.mse_loss(fwd_preds, Variable(next_embs.data))
+        if self.hyps['ensemble']:
+            fwd_loss = F.mse_loss(fwd_preds[0], fwd_targs.data)
+            for i in range(1, len(fwd_preds)):
+                fwd_loss += F.mse_loss(fwd_preds[i], next_embs.data)
+        else:
+            fwd_loss = F.mse_loss(fwd_preds, next_embs.data)
 
         return policy_loss, val_loss, entropy, fwd_loss, inv_loss
 

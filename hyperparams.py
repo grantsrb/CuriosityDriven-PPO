@@ -10,8 +10,8 @@ class HyperParams:
         hyp_dict['string_hyps'] = {
            "exp_name":"locemb",
            "seed": 121314,
-           #"env_type":"~/loc_games/LocationGame2dLinux_8/LocationGame2dLinux.x86_64", 
-           "env_type":"Breakout-v0", 
+           "env_type":"~/loc_games/LocationGame2dLinux_8/LocationGame2dLinux.x86_64", 
+           #"env_type":"Breakout-v0", 
            "model_type":"RNNLocator",
            "fwd_emb_type":"Embedder",
            "optim_type":'rmsprop', # Options: rmsprop, adam
@@ -28,13 +28,15 @@ class HyperParams:
            "max_tsteps": int(4e7),
            "n_tsteps": 96, # Maximum number of tsteps per rollout per perturbed copy
            "n_envs": 6, # Number of parallel python processes
-           "n_frame_stack":3,# Number of frames to stack in MDP state
+           "n_frame_stack":2,# Number of frames to stack in MDP state
            "n_rollouts": 12,
            "n_past_rews":25,
            "cache_size":2000,
            "n_cache_refresh":200,
 
            "dec_layers":3,
+
+           "n_nets": 3, # The ensemble count. Ensembling only applies to the fwd dynamics model. Does not apply to the embedding model
 
            "grid_size":15,
            "unit_size":4,
@@ -101,6 +103,7 @@ class HyperParams:
            "use_gae": True,
            "norm_rews": True,
            "running_rew_norm": False,
+           "ensemble": False,
            "use_idf": False, #Inverse Dynamics Features
            "seperate_embs": True, # Uses seperate embedding model for policy and dynamics, gradients are not backpropagated in either case
            "reconstruct": False, # Add reconstruction loss to embs, only applies if separate embedding network for forward prediction

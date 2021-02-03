@@ -1,6 +1,6 @@
 import torch
 from torch.autograd import Variable
-from .embedder import Embedder
+from .embedder import Embedder, CatModule
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
@@ -8,19 +8,6 @@ import numpy as np
 '''
 Simple, sequential convolutional net.
 '''
-
-class CatModule(nn.Module):
-    def __init__(self, modu):
-        super().__init__()
-        self.modu = modu
-
-    def forward(self, x, h):
-        """
-        x: FloatTensor (B,X)
-        h: FloatTensor (B,H)
-        """
-        inpt = torch.cat([x,h],dim=-1)
-        return self.modu(inpt)
 
 class GRUModel(nn.Module):
 
