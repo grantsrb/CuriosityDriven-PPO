@@ -55,3 +55,19 @@ def sample_action(pi):
         cumu_sum += pi[...,i]
         actions[(cumu_sum >= rand_nums) & (actions < 0)] = i
     return actions
+
+def one_hot_encode(idxs, width):
+    """
+    Creates one hot encoded vector of the inputs.
+
+    idxs - torch LongTensor of indexes to be converted to one hot vectors.
+        type: torch LongTensor
+        shape: (n_entries,)
+    width - integer of the size of each one hot vector
+        type: int
+    """
+    
+    one_hots = torch.zeros(len(idxs), width)
+    one_hots[torch.arange(0,len(idxs)).long(), idxs] = 1
+    return cuda_if(one_hots)
+

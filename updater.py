@@ -5,6 +5,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
 import copy
+from utils import one_hot_encode
 
 def cuda_if(obj):
     if torch.cuda.is_available():
@@ -19,25 +20,18 @@ class Updater():
     calc_gradients followed by update_model. If the size of the epoch is restricted by the memory, you can call calc_gradients to clear the graph.
     """
 
-    def __init__(self, net, fwd_net, hyps, inv_net=None, recon_net=None): 
+    def __init__(self, net, fwd_net, hyps, fwd_embedder,
+                                           inv_net=None,
+                                           recon_net=None,
+                                           contr_net=None): 
         self.net = net
         self.fwd_net = fwd_net
         self.old_net = copy.deepcopy(self.net).cpu()
-        self.fwd_embedder = self.net.embedder
-        if hyps['seperate_embs']:
-            if "fwd_emb_model" in hyps and hyps['fwd_emb_model'] is not None:
-                args = {**hyps}
-                args['bnorm'] = hyps['fwd_bnorm']
-                args['lnorm'] = hyps['fwd_lnorm']
-                args['input_space'] = args['state_shape']
-                self.fwd_embedder = cuda_if(hyps['fwd_emb_model'](**args))
-            else:
-                self.fwd_embedder = copy.deepcopy(self.net.embedder)
-            if hyps['resume']:
-                self.fwd_embedder.load_state_dict(torch.load(hyps['fwd_emb_file']))
+        self.fwd_embedder = fwd_embedder
         self.hyps = hyps
         self.inv_net = inv_net
         self.recon_net = recon_net
+        self.contr_net = contr_net
         self.gamma = hyps['gamma']
         self.lambda_ = hyps['lambda_']
         self.use_nstep_rets = hyps['use_nstep_rets']
@@ -55,6 +49,9 @@ class Updater():
             make_optim = True
         if self.recon_net is not None:
             params = params + list(self.recon_net.parameters())
+            make_optim = True
+        if self.contr_net is not None:
+            params = params + list(self.contr_net.parameters())
             make_optim = True
         if make_optim:
             self.reconinv_optim=self.new_optim(params, hyps['reconinv_lr'],
@@ -106,11 +103,13 @@ class Updater():
         dones = shared_data['dones']
         hs = shared_data['hs']
         next_hs = shared_data['next_hs']
+        fwd_hs = shared_data['fwd_hs']
 
         ## Fwd Net BPTT
         #bptt_loss, fwd_hs = self.fwd_bptt(shared_data)
 
-        cache_keys = ['actions', 'states', 'next_states', "hs", "next_hs"]
+        cache_keys = ['actions', 'states', 'next_states',
+                      "hs", "next_hs", "fwd_hs"]
         self.update_cache(shared_data, cache_keys)
 
 
@@ -118,33 +117,44 @@ class Updater():
         self.net.req_grads(False)
         self.fwd_embedder.req_grads(False)
         self.fwd_embedder.eval()
+        self.fwd_net.eval()
         self.net.eval()
         with torch.no_grad():
-            embs = self.fwd_embedder(states,hs)
+            # Actions
+            fwd_actions = actions
             if self.hyps['discrete_env']:
-                fwd_actions = cuda_if(self.one_hot_encode(actions,
+                fwd_actions = cuda_if(one_hot_encode(actions,
                                            self.net.output_space))
+
+            # Forward Predictions
+            if hyps['recurrent_fwd']:
+                fwd_preds, next_fwd_hs = self.fwd_net(states,
+                                                      fwd_actions,
+                                                      fwd_hs)
             else:
-                fwd_actions = actions
-            fwd_inputs = torch.cat([embs.data, fwd_actions], dim=-1)
-            if hyps['is_recurrent']:
-                fwd_preds = self.fwd_net(fwd_inputs,hs.data)
-            else:
-                fwd_preds = self.fwd_net(Variable(fwd_inputs))
-            del fwd_inputs
+                embs = self.fwd_embedder(states,hs)
+                fwd_inputs = torch.cat([embs.data, fwd_actions], dim=-1)
+                del embs
+                if hyps['is_recurrent']:
+                    fwd_preds = self.fwd_net(fwd_inputs,hs.data)
+                else:
+                    fwd_preds = self.fwd_net(Variable(fwd_inputs))
+                del fwd_inputs
+
+            # Rewards
             if hyps['ensemble']:
                 rewards = torch.stack(fwd_preds,dim=0).std(0).mean(-1)
-                del embs
             else:
-                #just adding the last targ emb to the already calculated embs
-                targets = self.fwd_embedder(next_states, next_hs)
-                del embs
+                temp_hs = next_fwd_hs if hyps['recurrent_fwd'] else next_hs
+                targets = self.fwd_embedder(next_states, temp_hs)
                 rewards = F.mse_loss(fwd_preds, targets, reduction="none")
                 rewards = rewards.view(len(fwd_preds),-1).mean(-1).data
                 del targets
             del fwd_preds
         self.fwd_embedder.train()
         self.net.train()
+        self.fwd_net.train()
+
         # Bootstrapped value predictions are added within the
         # make_advs_and_rets fxn in the case of using the discounted
         # rewards for the returns
@@ -182,7 +192,17 @@ class Updater():
         avg_epoch_inv_loss = 0
         self.net.train(mode=True)
         self.net.req_grads(True)
-        req_grad = self.inv_net is not None or self.recon_net is not None
+        req_grad = False
+        if self.inv_net is not None:
+            req_grad = True
+            self.inv_net.train()
+        if self.recon_net is not None:
+            req_grad = True
+            self.recon_net.train()
+        if self.contr_net is not None:
+            req_grad = True
+            self.contr_net.train()
+        #req_grad = req_grad or self.hyps['recurrent_fwd']
         self.fwd_embedder.req_grads(req_grad)
         cuda_if(self.old_net).load_state_dict(self.net.state_dict())
         self.old_net.train()
@@ -213,13 +233,14 @@ class Updater():
                     cache_batch.append(self.cache['actions'][cachxs])
                     cache_batch.append(self.cache['hs'][cachxs])
                     cache_batch.append(self.cache['next_hs'][cachxs])
-                    loss_tup = self.cache_losses(*cache_batch)
+                    cache_batch.append(self.cache['fwd_hs'][cachxs])
+                    loss_tup = self.fwd_losses(*cache_batch)
                     fwd_cache_loss,inv_cache_loss = loss_tup
                     loss = fwd_cache_loss + inv_cache_loss
                     loss.backward()
                     self.fwd_optim.step()
                     self.fwd_optim.zero_grad()
-                    if self.inv_net is not None or self.recon_net is not None:
+                    if req_grad:
                         self.reconinv_optim.step()
                         self.reconinv_optim.zero_grad()
                     epoch_cache_fwd += fwd_cache_loss.item()
@@ -249,7 +270,8 @@ class Updater():
                     cache_batch.append(self.cache['actions'][cachxs])
                     cache_batch.append(self.cache['hs'][cachxs])
                     cache_batch.append(self.cache['next_hs'][cachxs])
-                    loss_tup = self.cache_losses(*cache_batch)
+                    cache_batch.append(self.cache['fwd_hs'][cachxs])
+                    loss_tup = self.fwd_losses(*cache_batch)
                     fwd_cache_loss,inv_cache_loss = loss_tup
                 else:
                     fwd_cache_loss = cuda_if(torch.zeros(1))
@@ -263,7 +285,7 @@ class Updater():
                 batch_data = [states[idxs],next_states[idxs],
                               actions[idxs],advantages[idxs],
                               returns[idxs],hs[idxs],next_hs[idxs],
-                              old_vals[idxs],old_pis]
+                              old_vals[idxs],old_pis, fwd_hs[idxs]]
                 # Total Loss
                 loss_tup = self.ppo_losses(*batch_data)
                 policy_loss,val_loss,entropy,fwd_loss,inv_loss = loss_tup
@@ -282,6 +304,9 @@ class Updater():
                 if self.recon_net is not None:
                     _ = nn.utils.clip_grad_norm_(self.recon_net.parameters(),
                                                  hyps['max_norm'])
+                if self.contr_net is not None:
+                    _ = nn.utils.clip_grad_norm_(self.contr_net.parameters(),
+                                                 hyps['max_norm'])
                 self.norm = nn.utils.clip_grad_norm_(self.net.parameters(),
                                                  hyps['max_norm'])
 
@@ -291,7 +316,7 @@ class Updater():
                 self.fwd_optim.zero_grad()
                 self.optim.step()
                 self.optim.zero_grad()
-                if self.inv_net is not None or self.recon_net is not None:
+                if req_grad:
                     self.reconinv_optim.step()
                     self.reconinv_optim.zero_grad()
                 epoch_loss += float(loss.item())
@@ -326,7 +351,9 @@ class Updater():
         self.max_minsurr, self.min_minsurr = -1e10, 1e10
         self.max_rew, self.min_rew = -1e15, 1e15
 
-    def cache_losses(self, states, next_states, actions, hs, next_hs):
+    def fwd_losses(self, states, next_states, actions, hs,
+                                                       next_hs,
+                                                       fwd_hs):
         """
         Creates a loss term from historical data to avoid forgetting
         within the forward dynamics model.
@@ -339,17 +366,36 @@ class Updater():
             minibatch of empirical actions with shape (batch_size,)
         hs - torch FloatTensor or None (B,H)
             minibatch of recurrent state vectors at time t 
-        hs - torch FloatTensor or None (B,H)
+        next_hs - torch FloatTensor or None (B,H)
             minibatch of recurrent state vectors at t+1
+        fwd_hs - torch FloatTensor or None (B,H)
+            minibatch of recurrent state vectors from the fwd_net
         """
-        
-        embs = self.fwd_embedder(states, hs)
-        fwd_targs = self.fwd_embedder(next_states, next_hs)
+        # Prepare Actions
+        if self.hyps['discrete_env']:
+            fwd_actions = one_hot_encode(actions, self.net.output_space)
+        else:
+            fwd_actions = actions
+
+        # Make Embs
+        if self.hyps['recurrent_fwd']:
+            fwd_preds,next_fwd_hs,embs = self.fwd_net(states,
+                                                      fwd_actions,
+                                                      fwd_hs,
+                                                      ret_embs=True)
+            fwd_targs = self.fwd_embedder(next_states, next_fwd_hs)
+        else:
+            embs = self.fwd_embedder(states, hs)
+            fwd_targs = self.fwd_embedder(next_states, next_hs)
 
         # Inverse Dynamics Loss
         if self.inv_net is not None:
             inv_preds = self.inv_net(torch.cat([embs, fwd_targs], dim=-1))
-            inv_loss = F.cross_entropy(inv_preds, Variable(cuda_if(actions)))
+            if self.hyps['discrete_env']:
+                inv_loss = F.cross_entropy(inv_preds,
+                                           cuda_if(actions))
+            else:
+                inv_loss = F.mse_loss(inv_preds, cuda_if(actions))
         else:
             inv_loss = Variable(cuda_if(torch.zeros(1)))
 
@@ -360,30 +406,44 @@ class Updater():
         else:
             recon_loss = cuda_if(torch.zeros(1))
 
-        embs.detach(), fwd_targs.detach()
-        if self.hyps['discrete_env']:
-            fwd_actions = self.one_hot_encode(actions, self.net.output_space)
-        else:
-            fwd_actions = actions
-        fwd_inputs = torch.cat([embs.data, cuda_if(fwd_actions)], dim=-1)
-        if self.hyps['is_recurrent']:
-            fwd_preds = self.fwd_net(fwd_inputs, hs.data)
-        else:
-            fwd_preds = self.fwd_net(fwd_inputs)
+        # Fwd Loss
+        if not self.hyps['recurrent_fwd']:
+            # Preds already created in alternative case
+            embs.detach()
+            fwd_inputs = torch.cat([embs.data, cuda_if(fwd_actions)],
+                                                              dim=-1)
+            if self.hyps['is_recurrent']:
+                fwd_preds = self.fwd_net(fwd_inputs, hs.data)
+            else:
+                fwd_preds = self.fwd_net(fwd_inputs)
+
         if self.hyps['ensemble']:
-            fwd_loss = F.mse_loss(fwd_preds[0], fwd_targs.data)
+            fwd_loss = F.mse_loss(fwd_preds[0], fwd_targs.detach().data)
             for i in range(1, len(fwd_preds)):
-                fwd_loss += F.mse_loss(fwd_preds[i], fwd_targs.data)
+                fwd_loss += F.mse_loss(fwd_preds[i], fwd_targs.detach().data)
         else:
-            fwd_loss = F.mse_loss(fwd_preds, fwd_targs.data)
-        return fwd_loss, inv_loss+recon_loss
+            fwd_loss = F.mse_loss(fwd_preds, fwd_targs.detach().data)
+
+        # Contrastive Loss
+        if self.hyps['contrast']:
+            bsize = len(fwd_preds)
+            preds = fwd_preds[:,None] # (B,1,E)
+            targs = fwd_targs[None].repeat((bsize,1,1)) # (B,B,E)
+            contrasts = self.contr_net(targs, preds) # (B,B,2)
+            contrasts = contrasts.reshape(-1,contrasts.shape[-1])
+            labels = torch.diag(torch.ones(bsize)).long().reshape(-1)
+            contrast_loss = F.cross_entropy(contrasts,cuda_if(labels))
+        else:
+            contrast_loss = cuda_if(torch.zeros(1))
+        return fwd_loss, inv_loss+recon_loss+contrast_loss
 
     def ppo_losses(self, states, next_states, actions, advs,
                                                        rets,
                                                        hs,
                                                        next_hs,
                                                        old_vals,
-                                                       old_raw_pis):
+                                                       old_raw_pis,
+                                                       fwd_hs):
         """
         Completes the ppo specific loss approach
 
@@ -405,6 +465,8 @@ class Updater():
             the old network's value predictions
         old_raw_pis: torch FloatTensor (B,A)
             the old network's policy predictions
+        fwd_hs - torch FloatTensor
+            minibatch of recurrent states for the fwd model (batch_size,)
 
         Returns:
             policy_loss - the PPO CLIP policy gradient shape (1,)
@@ -473,39 +535,12 @@ class Updater():
                 val_loss = hyps['val_coef']*F.mse_loss(vals.squeeze(), rets)
         else:
             val_loss = Variable(cuda_if(torch.zeros(1)))
-
-
-        embs = self.fwd_embedder(states, hs)
-        next_embs = self.fwd_embedder(next_states, next_hs)
-        # Inv Dynamics Loss
-        if self.inv_net is not None:
-            inv_inputs = torch.cat([embs, next_embs], dim=-1) # Backprop into embeddings
-            inv_preds = self.inv_net(inv_inputs)
-            inv_loss = F.cross_entropy(inv_preds, Variable(cuda_if(actions)))
-        else:
-            inv_loss = Variable(cuda_if(torch.zeros(1)))
-        # Reconstruction Loss
-        if self.recon_net is not None:
-            recons = self.recon_net(embs)
-            recon_loss = F.mse_loss(recons, states.data)
-            inv_loss += recon_loss
-
-        # Fwd Dynamics Loss
-        if self.hyps['discrete_env']:
-            fwd_actions = self.one_hot_encode(actions, self.net.output_space)
-        else:
-            fwd_actions = actions
-        fwd_inputs = torch.cat([embs.data, cuda_if(fwd_actions)], dim=-1)
-        if hyps['is_recurrent']:
-            fwd_preds = self.fwd_net(fwd_inputs,hs.data)
-        else:
-            fwd_preds = self.fwd_net(Variable(fwd_inputs))
-        if self.hyps['ensemble']:
-            fwd_loss = F.mse_loss(fwd_preds[0], next_embs.data)
-            for i in range(1, len(fwd_preds)):
-                fwd_loss += F.mse_loss(fwd_preds[i], next_embs.data)
-        else:
-            fwd_loss = F.mse_loss(fwd_preds, next_embs.data)
+        fwd_loss, inv_loss = self.fwd_losses(states,
+                                             next_states,
+                                             actions,
+                                             hs,
+                                             next_hs,
+                                             fwd_hs)
 
         return policy_loss, val_loss, entropy, fwd_loss, inv_loss
 
@@ -522,21 +557,6 @@ class Updater():
         log_ps = log_ps/(2*torch.clamp(sigmas**2,min=1e-4))
         logsigs = torch.log(torch.sqrt(2*float(np.pi)*sigmas))
         return log_ps - logsigs
-
-    def one_hot_encode(self, idxs, width):
-        """
-        Creates one hot encoded vector of the inputs.
-
-        idxs - torch LongTensor of indexes to be converted to one hot vectors.
-            type: torch LongTensor
-            shape: (n_entries,)
-        width - integer of the size of each one hot vector
-            type: int
-        """
-        
-        one_hots = torch.zeros(len(idxs), width)
-        one_hots[torch.arange(0,len(idxs)).long(), idxs] = 1
-        return one_hots
 
     def make_advs_and_rets(self, states, next_states, rewards,
                                                       dones,
@@ -650,6 +670,7 @@ class Updater():
                                                  fwd_optim_file,
                                                  inv_save_file=None,
                                                  recon_save_file=None,
+                                                 contr_save_file=None,
                                                  reconinv_optim_file=None):
         """
         Saves the state dict of the model to file.
@@ -667,6 +688,9 @@ class Updater():
                 save_optim = True
             if recon_save_file is not None and self.recon_net is not None:
                 torch.save(self.recon_net.state_dict(), recon_save_file)
+                save_optim = True
+            if contr_save_file is not None and self.contr_net is not None:
+                torch.save(self.contr_net.state_dict(), contr_save_file)
                 save_optim = True
             if save_optim and reconinv_optim_file is not None:
                 torch.save(self.reconinv_optim.state_dict(),
@@ -693,6 +717,9 @@ class Updater():
         else:
             new_optim = optim.RMSprop(params, lr=lr) 
         return new_optim
+
+
+
 
     #def fwd_bptt(self, datas):
     #    """
