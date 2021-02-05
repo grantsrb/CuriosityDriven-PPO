@@ -17,7 +17,8 @@ import time
 from collections import deque
 from utils import cuda_if, deque_maxmin
 from ml_utils.utils import try_key
-from models.embedder import CatModule, Ensemble, FwdRunModel,RecurrentFwdModel
+from models.embedder import CatModule, Ensemble, FwdRunModel,RecurrentFwdModel, ContrastModel
+from transformer.models import Attncoder
 
 class CurioPPO:
     def __init__(self):
@@ -70,6 +71,8 @@ class CurioPPO:
             reconinv_optim_file = base_name+"_reconinvoptim.p"
         else:
             recon_save_file = None
+        if hyps['contrast']:
+            contr_save_file = base_name+"_contrnet.p"
         log_file = base_name+"_log.txt"
         if hyps['resume']: log = open(log_file, 'a')
         else: log = open(log_file, 'w')
@@ -177,11 +180,14 @@ class CurioPPO:
                 fwd_net = Ensemble(fwd_net)
         fwd_net = cuda_if(fwd_net)
 
+        # Inverse Dynamics
         if hyps['inv_model'] is not None:
             inv_net = hyps['inv_model'](h_size, action_size)
             inv_net = cuda_if(inv_net)
         else:
             inv_net = None
+
+        # Reconstruction Model
         if hyps['recon_model'] is not None:
             recon_net = hyps['recon_model'](emb_size=h_size,
                                        img_shape=hyps['state_shape'],
@@ -190,6 +196,19 @@ class CurioPPO:
             recon_net = cuda_if(recon_net)
         else:
             recon_net = None
+
+        # Contrastive Model
+        if hyps['contrast']:
+            args = {**hyps}
+            args['emb_size'] = h_size
+            args['n_layers'] = hyps['dec_layers']
+            args['attn_size'] = 64
+            args['n_heads'] = 8
+            args['out_size'] = 2
+            contr_net = ContrastModel(**args)
+            contr_net = cuda_if(contr_net)
+        else:
+            contr_net = None
         if hyps['resume']:
             net.load_state_dict(torch.load(net_save_file))
         base_net = copy.deepcopy(net)
@@ -223,6 +242,8 @@ class CurioPPO:
                 inv_net.load_state_dict(torch.load(inv_save_file))
             if recon_net is not None:
                 recon_net.load_state_dict(torch.load(recon_save_file))
+            if contr_net is not None:
+                recon_net.load_state_dict(torch.load(contr_save_file))
 
         # Start Data Collection
         print("Making New Processes")
@@ -239,7 +260,8 @@ class CurioPPO:
         # Make Updater
         updater = Updater(base_net, fwd_net, hyps, fwd_embedder,
                                                    inv_net,
-                                                   recon_net)
+                                                   recon_net,
+                                                   contr_net)
         if hyps['resume']:
             updater.optim.load_state_dict(torch.load(optim_save_file))
             updater.fwd_optim.load_state_dict(torch.load(fwd_optim_file))
@@ -308,6 +330,7 @@ class CurioPPO:
                                                  fwd_optim_file,
                                                  inv_save_file,
                                                  recon_save_file,
+                                                 contr_save_file,
                                                  reconinv_optim_file]
 
                     for i in range(len(save_names)):
@@ -345,6 +368,7 @@ class CurioPPO:
                                                       fwd_optim_file,
                                                       inv_save_file,
                                                       recon_save_file,
+                                                      contr_save_file,
                                                       reconinv_optim_file)
 
                 # Print Epoch Data

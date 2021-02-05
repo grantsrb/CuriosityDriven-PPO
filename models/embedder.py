@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from .rnnlocator import MediumCNN, SimpleCNN, Flatten
+from transformer.models import Attncoder
 
 
 class ConvEmbedder(nn.Module):
@@ -364,3 +365,23 @@ class FwdRunModel(nn.Module):
             return pred, h, embs
         return pred, h
 
+class ContrastModel(nn.Module):
+    def __init__(self, emb_size=512, out_size=2, *args, **kwargs):
+        super().__init__()
+        self.emb_size = emb_size
+        self.out_size = out_size
+        self.attn = Attncoder(1, *args, emb_size=self.emb_size,
+                                 **kwargs,
+                                 use_mask=False,
+                                 init_decs=False,
+                                 gen_decs=False)
+        self.classifier = nn.Sequential(
+                    nn.Linear(self.emb_size, self.emb_size),
+                    nn.ReLU(),
+                    nn.Linear(self.emb_size, self.out_size))
+
+    def forward(self, x, y):
+        feats = self.attn(x,y) # (B,S,E)
+        shape = feats.shape
+        outs = self.classifier(feats.reshape(-1,self.emb_size)) #(B*S,O)
+        return outs.reshape(*shape[:-1], self.out_size) # (B,S,O)

@@ -22,7 +22,8 @@ class Updater():
 
     def __init__(self, net, fwd_net, hyps, fwd_embedder,
                                            inv_net=None,
-                                           recon_net=None): 
+                                           recon_net=None,
+                                           contr_net=None): 
         self.net = net
         self.fwd_net = fwd_net
         self.old_net = copy.deepcopy(self.net).cpu()
@@ -30,6 +31,7 @@ class Updater():
         self.hyps = hyps
         self.inv_net = inv_net
         self.recon_net = recon_net
+        self.contr_net = contr_net
         self.gamma = hyps['gamma']
         self.lambda_ = hyps['lambda_']
         self.use_nstep_rets = hyps['use_nstep_rets']
@@ -47,6 +49,9 @@ class Updater():
             make_optim = True
         if self.recon_net is not None:
             params = params + list(self.recon_net.parameters())
+            make_optim = True
+        if self.contr_net is not None:
+            params = params + list(self.contr_net.parameters())
             make_optim = True
         if make_optim:
             self.reconinv_optim=self.new_optim(params, hyps['reconinv_lr'],
@@ -187,7 +192,16 @@ class Updater():
         avg_epoch_inv_loss = 0
         self.net.train(mode=True)
         self.net.req_grads(True)
-        req_grad = self.inv_net is not None or self.recon_net is not None
+        req_grad = False
+        if self.inv_net is not None:
+            req_grad = True
+            self.inv_net.train()
+        if self.recon_net is not None:
+            req_grad = True
+            self.recon_net.train()
+        if self.contr_net is not None:
+            req_grad = True
+            self.contr_net.train()
         #req_grad = req_grad or self.hyps['recurrent_fwd']
         self.fwd_embedder.req_grads(req_grad)
         cuda_if(self.old_net).load_state_dict(self.net.state_dict())
@@ -226,7 +240,7 @@ class Updater():
                     loss.backward()
                     self.fwd_optim.step()
                     self.fwd_optim.zero_grad()
-                    if self.inv_net is not None or self.recon_net is not None:
+                    if req_grad:
                         self.reconinv_optim.step()
                         self.reconinv_optim.zero_grad()
                     epoch_cache_fwd += fwd_cache_loss.item()
@@ -290,6 +304,9 @@ class Updater():
                 if self.recon_net is not None:
                     _ = nn.utils.clip_grad_norm_(self.recon_net.parameters(),
                                                  hyps['max_norm'])
+                if self.contr_net is not None:
+                    _ = nn.utils.clip_grad_norm_(self.contr_net.parameters(),
+                                                 hyps['max_norm'])
                 self.norm = nn.utils.clip_grad_norm_(self.net.parameters(),
                                                  hyps['max_norm'])
 
@@ -299,7 +316,7 @@ class Updater():
                 self.fwd_optim.zero_grad()
                 self.optim.step()
                 self.optim.zero_grad()
-                if self.inv_net is not None or self.recon_net is not None:
+                if req_grad:
                     self.reconinv_optim.step()
                     self.reconinv_optim.zero_grad()
                 epoch_loss += float(loss.item())
@@ -406,7 +423,19 @@ class Updater():
                 fwd_loss += F.mse_loss(fwd_preds[i], fwd_targs.detach().data)
         else:
             fwd_loss = F.mse_loss(fwd_preds, fwd_targs.detach().data)
-        return fwd_loss, inv_loss+recon_loss
+
+        # Contrastive Loss
+        if self.hyps['contrast']:
+            bsize = len(fwd_preds)
+            preds = fwd_preds[:,None] # (B,1,E)
+            targs = fwd_targs[None].repeat((bsize,1,1)) # (B,B,E)
+            contrasts = self.contr_net(targs, preds) # (B,B,2)
+            contrasts = contrasts.reshape(-1,contrasts.shape[-1])
+            labels = torch.diag(torch.ones(bsize)).long().reshape(-1)
+            contrast_loss = F.cross_entropy(contrasts,cuda_if(labels))
+        else:
+            contrast_loss = cuda_if(torch.zeros(1))
+        return fwd_loss, inv_loss+recon_loss+contrast_loss
 
     def ppo_losses(self, states, next_states, actions, advs,
                                                        rets,
@@ -642,6 +671,7 @@ class Updater():
                                                  fwd_optim_file,
                                                  inv_save_file=None,
                                                  recon_save_file=None,
+                                                 contr_save_file=None,
                                                  reconinv_optim_file=None):
         """
         Saves the state dict of the model to file.
@@ -659,6 +689,9 @@ class Updater():
                 save_optim = True
             if recon_save_file is not None and self.recon_net is not None:
                 torch.save(self.recon_net.state_dict(), recon_save_file)
+                save_optim = True
+            if contr_save_file is not None and self.contr_net is not None:
+                torch.save(self.contr_net.state_dict(), contr_save_file)
                 save_optim = True
             if save_optim and reconinv_optim_file is not None:
                 torch.save(self.reconinv_optim.state_dict(),

@@ -8,7 +8,7 @@ class HyperParams:
         
         hyp_dict = dict()
         hyp_dict['string_hyps'] = {
-           "exp_name":"killa",
+           "exp_name":"contrast",
            "seed": 121314,
            "env_type":"~/loc_games/LocationGame2dLinux_9/LocationGame2dLinux.x86_64", 
            #"env_type":"Breakout-v0", 
@@ -112,6 +112,7 @@ class HyperParams:
            "reconstruct": False, # Add reconstruction loss to embs, only applies if separate embedding network for forward prediction
            "full_cache_loop": False, # Will do a complete cache loop seperately from the ppo update at every ppo epoch
            "recurrent_fwd":True,
+           "contrast":True,
            }
         hyp_dict["list_hyps"] = {
            "recon_ksizes":None,
