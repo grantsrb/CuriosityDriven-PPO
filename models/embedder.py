@@ -285,3 +285,82 @@ class CatModule(nn.Module):
         inpt = torch.cat([x,h],dim=-1)
         return self.modu(inpt)
 
+class RecurrentFwdModel(nn.Module):
+    def __init__(self, h_size, a_size, rnn_type="GRUCell",
+                                       lnorm=False):
+        """
+        h_size: int
+        a_size: int
+            size of action space
+        rnn_type: str
+            the name of the rnn cell type from pytorch
+        lnorm: bool
+            if true, the hidden vector is layer normed before making
+            prediction
+        """
+        super().__init__()
+        self.h_size = h_size
+        self.a_size = a_size
+        self.lnorm = lnorm
+        self.rnn = getattr(nn, rnn_type)(input_size=self.h_size+self.a_size,
+                                         hidden_size=self.h_size)
+        self.dynamics = []
+        if self.lnorm: self.dynamics.append(nn.LayerNorm(self.h_size))
+        self.dynamics += [nn.Linear(h_size, h_size), 
+            nn.ReLU(), nn.Linear(h_size, h_size)]
+        self.dynamics = nn.Sequential(*self.dynamics)
+
+        # Learned initialization for rnn hidden vector
+        self.h_shape = (1,self.h_size)
+        self.h_init = torch.randn(self.h_shape)
+        divisor = float(np.sqrt(self.h_size))
+        self.h_init = nn.Parameter(self.h_init/divisor)
+
+    def fresh_h(self, batch_size=1):
+        """
+        returns an h that is of shape (B,E)
+        """
+        return self.h_init.repeat(batch_size,1)
+
+    def forward(self, x, h):
+        """
+        x: float tensor (B, E+A)
+        h: float tensor (B, E)
+        """
+        h = self.rnn(x,h)
+        pred = self.dynamics(h)
+        return pred,h
+
+class FwdRunModel(nn.Module):
+    def __init__(self, embedder, dynamics):
+        """
+        embedder: module
+            takes an x or an x and h vector and outputs features
+        dynamics: module
+            takes an input of features concatenated with actions and an
+            h vector and outputs feature prediction and a new h
+        """
+        super().__init__()
+        self.embedder = embedder
+        self.dynamics = dynamics
+        self.emb_size = embedder.h_size
+
+    def fresh_h(self, batch_size=1):
+        self.h = self.dynamics.fresh_h(batch_size)
+        return self.h
+
+    def forward(self, x, a, h=None, ret_embs=False):
+        """
+        x: float tensor (B, C, H, W)
+        a: float tensor (B, A)
+        h: float tensor (B, E)
+        """
+        if h is None:
+            h = self.h
+        embs = self.embedder(x, h) # (B, E)
+        feats = torch.cat([embs,a], dim=-1) # (B, E+A)
+        pred, h = self.dynamics(feats, h) # (B, E), (B, E)
+        if ret_embs:
+            return pred, h, embs
+        return pred, h
+

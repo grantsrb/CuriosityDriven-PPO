@@ -8,12 +8,13 @@ class HyperParams:
         
         hyp_dict = dict()
         hyp_dict['string_hyps'] = {
-           "exp_name":"locemb",
+           "exp_name":"killa",
            "seed": 121314,
-           "env_type":"~/loc_games/LocationGame2dLinux_8/LocationGame2dLinux.x86_64", 
+           "env_type":"~/loc_games/LocationGame2dLinux_9/LocationGame2dLinux.x86_64", 
            #"env_type":"Breakout-v0", 
            "model_type":"RNNLocator",
            "fwd_emb_type":"Embedder",
+           "rnn_type":"GRUCell",
            "optim_type":'rmsprop', # Options: rmsprop, adam
            "fwd_optim_type":'rmsprop', # Options: rmsprop, adam
            "reconinv_optim_type":'adam', # Options: rmsprop, adam
@@ -45,8 +46,8 @@ class HyperParams:
            "validation":0,
            "visibleOrigin":1,
            "endAtOrigin":1,
-           "egoCentered":0,
-           "absoluteCoords":1,
+           "egoCentered":1,
+           "absoluteCoords":0,
            "smoothMovement":0,
            "restrictCamera":1,
            "randomizeObs":0,
@@ -60,6 +61,8 @@ class HyperParams:
            "meritForward":1,
            "minObjCount":2,
            "maxObjCount":5,
+           "minCount":1,
+           "maxCount":-1,
            }
 
         hyp_dict['float_hyps'] = {
@@ -108,6 +111,7 @@ class HyperParams:
            "seperate_embs": True, # Uses seperate embedding model for policy and dynamics, gradients are not backpropagated in either case
            "reconstruct": False, # Add reconstruction loss to embs, only applies if separate embedding network for forward prediction
            "full_cache_loop": False, # Will do a complete cache loop seperately from the ppo update at every ppo epoch
+           "recurrent_fwd":True,
            }
         hyp_dict["list_hyps"] = {
            "recon_ksizes":None,
@@ -117,7 +121,8 @@ class HyperParams:
            "randObjOrder", "visibleTargs",
            "audibleTargs", "minObjLoc", "maxObjLoc",
            "minObjCount", "maxObjCount", "countOut",
-           "visibleCount", "deleteTargets", "meritForward"
+           "visibleCount", "deleteTargets", "meritForward",
+           "minCount", "maxCount"
            ] }
         self.hyps = self.read_command_line(hyp_dict)
         if arg_hyps is not None:

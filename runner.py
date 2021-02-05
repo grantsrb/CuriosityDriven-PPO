@@ -1,4 +1,4 @@
-from utils import next_state, sample_action, cuda_if
+from utils import next_state, sample_action, cuda_if, one_hot_encode
 from torch.autograd import Variable
 import torch
 import gym
@@ -47,8 +47,9 @@ class Runner:
         self.rew_q = rew_q
         self.obs_deque = deque(maxlen=hyps['n_frame_stack'])
         self.prev_h = None
+        self.prev_fwd_h = None
 
-    def run(self, net):
+    def run(self, net, fwd_net=None):
         """
         run is the entry function to begin collecting rollouts from the
         environment using the specified net. gate_q indicates when to begin
@@ -60,6 +61,7 @@ class Runner:
             environment.
         """
         self.net = net
+        self.fwd_net = fwd_net
         float_params = try_key(self.hyps,"float_params", dict())
         self.env = SeqEnv(self.hyps['env_type'], self.hyps['seed'],
                                             worker_id=None,
@@ -74,10 +76,10 @@ class Runner:
         with torch.no_grad():
             while self.end_q.empty():
                 idx = self.gate_q.get() # Opened from main process
-                self.rollout(self.net, idx, self.hyps)
+                self.rollout(self.net, idx, self.hyps, self.fwd_net)
                 self.stop_q.put(idx) # Signals to main process that data has been collected
 
-    def rollout(self, net, idx, hyps):
+    def rollout(self, net, idx, hyps, fwd_net):
         """
         rollout handles the actual rollout of the environment for n steps in time.
         It is called from run and performs a single rollout, placing the
@@ -95,8 +97,15 @@ class Runner:
                     "n_frame_stack" - number of frames to stack for
                                 creation of the mdp state
                     "preprocess" - function to preprocess raw observations
+        fwd_net - torch Module object. This is the model to predict
+            the environment dynamics.
         """
         net.eval()
+        fwd_h = None
+        if fwd_net is not None:
+            cuda_if(fwd_net.eval())
+            fwd_h = self.prev_fwd_h if self.prev_fwd_h is not None\
+                                else fwd_net.fresh_h(1)
         hyps = self.hyps
         state = self.state_bookmark
         n_tsteps = hyps['n_tsteps']
@@ -141,6 +150,18 @@ class Runner:
             if isinstance(action, np.ndarray):
                 action = cuda_if(torch.from_numpy(action))
             self.datas['actions'][startx+i] = action
+            if fwd_net is not None:
+                assert not isinstance(fwd_h, list)
+                # Prepare Action
+                action = self.datas['actions'][startx+i:startx+i+1]
+                fwd_action = action
+                if hyps['discrete_env']:
+                    fwd_action = one_hot_encode(action,
+                                                net.output_space)
+                self.datas["fwd_hs"][startx+i]=cuda_if(fwd_h.detach().data)
+                _,fwd_h = fwd_net(self.datas['states'][startx+i][None],
+                                  a=fwd_action,
+                                  h=fwd_h)
             state = next_state(self.env, self.obs_deque,
                                          obs=obs,
                                          reset=reset, 
@@ -154,6 +175,8 @@ class Runner:
         self.state_bookmark = state
         if h is not None:
             self.prev_h = h.data
+        if fwd_h is not None:
+            self.prev_fwd_h = fwd_h.data
 
 class StatsRunner(Runner):
     def __init__(self, env, hyps):
