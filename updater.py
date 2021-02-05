@@ -119,6 +119,8 @@ class Updater():
         self.fwd_embedder.eval()
         self.fwd_net.eval()
         self.net.eval()
+
+        # Reward
         with torch.no_grad():
             # Actions
             fwd_actions = actions
@@ -142,7 +144,17 @@ class Updater():
                 del fwd_inputs
 
             # Rewards
-            if hyps['ensemble']:
+            if self.hyps['contrast_rews']:
+                bsize,esize = fwd_preds.shape
+                preds = fwd_preds[:,None] # (B,1,E)
+                targs = fwd_targs[None].repeat((bsize,1,1)) # (B,B,E)
+                contrasts = self.contr_net(targs, preds) # (B,B,2)
+                contrasts = contrasts.reshape(-1,contrasts.shape[-1])
+                labels = torch.diag(torch.ones(bsize)).long().reshape(-1)
+                rewards = F.cross_entropy(contrasts,cuda_if(labels),
+                                          reduction="none")
+                rewards = rewards.reshape(bsize,bsize).mean(-1)
+            elif hyps['ensemble']:
                 rewards = torch.stack(fwd_preds,dim=0).std(0).mean(-1)
             else:
                 temp_hs = next_fwd_hs if hyps['recurrent_fwd'] else next_hs
@@ -429,7 +441,7 @@ class Updater():
             bsize = len(fwd_preds)
             preds = fwd_preds[:,None] # (B,1,E)
             targs = fwd_targs[None].repeat((bsize,1,1)) # (B,B,E)
-            contrasts = self.contr_net(targs, preds) # (B,B,2)
+            contrasts = self.contr_net(targs.data, preds) # (B,B,2)
             contrasts = contrasts.reshape(-1,contrasts.shape[-1])
             labels = torch.diag(torch.ones(bsize)).long().reshape(-1)
             contrast_loss = F.cross_entropy(contrasts,cuda_if(labels))
