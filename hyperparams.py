@@ -8,16 +8,16 @@ class HyperParams:
         
         hyp_dict = dict()
         hyp_dict['string_hyps'] = {
-           "exp_name":"locemb",
+           "exp_name":"ensemblecontrol",
            "seed": 121314,
-           "env_type":"~/loc_games/LocationGame2dLinux_8/LocationGame2dLinux.x86_64", 
-           #"env_type":"Breakout-v0", 
-           "model_type":"RNNLocator",
+           #"env_type":"~/loc_games/LocationGame2dLinux_8/LocationGame2dLinux.x86_64", 
+           "env_type":"Breakout-v0", 
+           "model_type":"GRUModel",
            "fwd_emb_type":"Embedder",
            "optim_type":'rmsprop', # Options: rmsprop, adam
            "fwd_optim_type":'rmsprop', # Options: rmsprop, adam
            "reconinv_optim_type":'adam', # Options: rmsprop, adam
-           "save_folder":"/media/grantsrb/curioppo_saves/"
+           "save_folder":"/data2/pdplab/grantsrb/curioppo_saves/"
            }
 
         hyp_dict['int_hyps'] = {
@@ -36,7 +36,7 @@ class HyperParams:
 
            "dec_layers":3,
 
-           "n_nets": 3, # The ensemble count. Ensembling only applies to the fwd dynamics model. Does not apply to the embedding model
+           "n_nets": 9, # The ensemble count. Ensembling only applies to the fwd dynamics model. Does not apply to the embedding model
 
            "grid_size":15,
            "unit_size":4,
