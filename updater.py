@@ -501,7 +501,7 @@ class Updater():
         else:
             fwd_preds = self.fwd_net(Variable(fwd_inputs))
         if self.hyps['ensemble']:
-            fwd_loss = F.mse_loss(fwd_preds[0], fwd_targs.data)
+            fwd_loss = F.mse_loss(fwd_preds[0], next_embs.data)
             for i in range(1, len(fwd_preds)):
                 fwd_loss += F.mse_loss(fwd_preds[i], next_embs.data)
         else:

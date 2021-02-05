@@ -1,3 +1,4 @@
+import copy
 import torch
 from torch.autograd import Variable
 import torch.nn as nn
@@ -259,12 +260,16 @@ class Ensemble(nn.Module):
         """
         super().__init__()
         self.nets = nn.ModuleList([])
-        for _ in range(n_copies):
+        for _ in range(n_nets):
             new_net = copy.deepcopy(net)
             for name,modu in new_net.named_modules():
                 if isinstance(modu, nn.Conv2d) or isinstance(modu, nn.Linear):
                     nn.init.xavier_uniform(modu.weight)
             self.nets.append(new_net)
+
+    @property
+    def n_nets(self):
+        return len(self.nets)
 
     def forward(self, x, h=None, **kwargs):
         preds = []
