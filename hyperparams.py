@@ -10,15 +10,15 @@ class HyperParams:
         hyp_dict['string_hyps'] = {
            "exp_name":"contrast",
            "seed": 121314,
-           #"env_type":"~/loc_games/LocationGame2dLinux_9/LocationGame2dLinux.x86_64", 
-           "env_type":"Breakout-v0", 
+           "env_type":"~/loc_games/LocationGame2dLinux_9/LocationGame2dLinux.x86_64", 
+           #"env_type":"Breakout-v0", 
            "model_type":"RNNLocator",
            "fwd_emb_type":"Embedder",
            "rnn_type":"GRUCell",
            "optim_type":'rmsprop', # Options: rmsprop, adam
            "fwd_optim_type":'rmsprop', # Options: rmsprop, adam
            "reconinv_optim_type":'adam', # Options: rmsprop, adam
-           "save_folder":"/data2/pdplab/grantsrb/curioppo_saves/"
+           "save_folder":"/media/grantsrb/curioppo_saves/"
            }
 
         hyp_dict['int_hyps'] = {
@@ -113,6 +113,7 @@ class HyperParams:
            "full_cache_loop": False, # Will do a complete cache loop seperately from the ppo update at every ppo epoch
            "recurrent_fwd":True,
            "contrast":True,
+           "contrast_rews":False,
            }
         hyp_dict["list_hyps"] = {
            "recon_ksizes":None,
