@@ -100,6 +100,7 @@ class Extractor(LocatorBase):
     def __init__(self, cnn_type="MediumCNN", **kwargs):
         super().__init__(**kwargs)
         self.cnn_type = cnn_type
+        self.h_size = kwargs['emb_size']
 
         self.cnn = globals()[self.cnn_type](**kwargs)
         self.pos_encoder = PositionalEncoder(self.cnn.seq_len,

@@ -142,26 +142,39 @@ class Updater():
                 else:
                     fwd_preds = self.fwd_net(Variable(fwd_inputs))
                 del fwd_inputs
+            del fwd_actions
 
             # Rewards
-            if self.hyps['contrast_rews']:
-                bsize,esize = fwd_preds.shape
-                preds = fwd_preds[:,None] # (B,1,E)
-                targs = fwd_targs[None].repeat((bsize,1,1)) # (B,B,E)
-                contrasts = self.contr_net(targs, preds) # (B,B,2)
-                contrasts = contrasts.reshape(-1,contrasts.shape[-1])
-                labels = torch.diag(torch.ones(bsize)).long().reshape(-1)
-                rewards = F.cross_entropy(contrasts,cuda_if(labels),
-                                          reduction="none")
-                rewards = rewards.reshape(bsize,bsize).mean(-1)
-            elif hyps['ensemble']:
+            if hyps['ensemble']:
                 rewards = torch.stack(fwd_preds,dim=0).std(0).mean(-1)
             else:
                 temp_hs = next_fwd_hs if hyps['recurrent_fwd'] else next_hs
-                targets = self.fwd_embedder(next_states, temp_hs)
-                rewards = F.mse_loss(fwd_preds, targets, reduction="none")
-                rewards = rewards.view(len(fwd_preds),-1).mean(-1).data
-                del targets
+                fwd_targs = self.fwd_embedder(next_states, temp_hs)
+                if self.hyps['contrast_rews']:
+                    del temp_hs
+                    # All wrong
+                    #bsize = 64
+                    #contrasts = []
+                    #bsize = 
+                    #n_loops = len(fwd_preds)//bsize
+                    #perm = torch.randperm(len(fwd_preds)).long()
+                    #for i in range(n_loops):
+                    #    idxs = perm[i*bsize:(i+1)*bsize]
+                    #    targs = fwd_targs[idxs][None].repeat((bsize,1,1))# (B,B,E)
+                    #    preds = fwd_preds[idxs][:,None]
+                    #    contr = self.contr_net(targs,
+                    #                            fwd_preds.data) # (B,B,2)
+                    #    contrasts.append(contr)
+                    #contrasts = torch.vstack(contrasts)
+                    #contrasts = contrasts.reshape(-1,contrasts.shape[-1])
+                    #labels = torch.diag(torch.ones(bsize)).long().reshape(-1)
+                    #rewards = F.cross_entropy(contrasts,cuda_if(labels),
+                    #                          reduction="none")
+                    #rewards = rewards.reshape(bsize,bsize).mean(-1)
+                else:
+                    rewards = F.mse_loss(fwd_preds, fwd_targs, reduction="none")
+                    rewards = rewards.view(len(fwd_preds),-1).mean(-1).data
+                del fwd_targs
             del fwd_preds
         self.fwd_embedder.train()
         self.net.train()

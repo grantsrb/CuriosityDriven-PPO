@@ -69,10 +69,11 @@ class CurioPPO:
         if hyps['recon_model'] is not None:
             recon_save_file = base_name+"_reconnet.p"
             reconinv_optim_file = base_name+"_reconinvoptim.p"
+        else: recon_save_file = None
+        if hyps['contrast']: contr_save_file = base_name+"_contrnet.p"
         else:
-            recon_save_file = None
-        if hyps['contrast']:
-            contr_save_file = base_name+"_contrnet.p"
+            contr_save_file = None
+            reconinv_optim_file = base_name+"_reconinvoptim.p"
         log_file = base_name+"_log.txt"
         if hyps['resume']: log = open(log_file, 'a')
         else: log = open(log_file, 'w')
@@ -209,6 +210,7 @@ class CurioPPO:
             contr_net = cuda_if(contr_net)
         else:
             contr_net = None
+
         if hyps['resume']:
             net.load_state_dict(torch.load(net_save_file))
         base_net = copy.deepcopy(net)
@@ -224,6 +226,8 @@ class CurioPPO:
                 args['bnorm'] = hyps['fwd_bnorm']
                 args['lnorm'] = hyps['fwd_lnorm']
                 args['input_space'] = args['state_shape']
+                args['emb_size'] = hyps['h_size']
+                args['img_shape'] = hyps['state_shape']
                 fwd_embedder = cuda_if(hyps['fwd_emb_model'](**args))
             else:
                 fwd_embedder = copy.deepcopy(net.embedder)
