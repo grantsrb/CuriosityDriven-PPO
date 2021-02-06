@@ -17,7 +17,7 @@ import time
 from collections import deque
 from utils import cuda_if, deque_maxmin
 from ml_utils.utils import try_key
-from models.embedder import CatModule, Ensemble, FwdRunModel,RecurrentFwdModel, ContrastModel
+from models.embedder import CatModule, Ensemble, FwdRunModel,RecurrentFwdModel, ContrastAttnModel, SimpleContrast
 from transformer.models import Attncoder
 
 class CurioPPO:
@@ -206,7 +206,7 @@ class CurioPPO:
             args['attn_size'] = 64
             args['n_heads'] = 8
             args['out_size'] = 2
-            contr_net = ContrastModel(**args)
+            contr_net = globals()[hyps['contrast_type']](**args)
             contr_net = cuda_if(contr_net)
         else:
             contr_net = None

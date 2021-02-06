@@ -152,7 +152,6 @@ class Updater():
                 fwd_targs = self.fwd_embedder(next_states, temp_hs)
                 if self.hyps['contrast_rews']:
                     del temp_hs
-                    # All wrong
                     #bsize = 64
                     #contrasts = []
                     #bsize = 
@@ -452,11 +451,12 @@ class Updater():
         # Contrastive Loss
         if self.hyps['contrast']:
             bsize = len(fwd_preds)
-            preds = fwd_preds[:,None] # (B,1,E)
-            targs = fwd_targs[None].repeat((bsize,1,1)) # (B,B,E)
-            contrasts = self.contr_net(targs.data, preds) # (B,B,2)
-            contrasts = contrasts.reshape(-1,contrasts.shape[-1])
-            labels = torch.diag(torch.ones(bsize)).long().reshape(-1)
+            contrasts = self.contr_net(fwd_preds, fwd_targs.data) # (B,B,2)
+            if len(contrasts.shape) > 2:
+                contrasts = contrasts.reshape(-1,contrasts.shape[-1])
+                labels = torch.diag(torch.ones(bsize)).long().reshape(-1)
+            else:
+                labels = torch.arange(bsize).long()
             contrast_loss = F.cross_entropy(contrasts,cuda_if(labels))
         else:
             contrast_loss = cuda_if(torch.zeros(1))

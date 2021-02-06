@@ -370,23 +370,75 @@ class FwdRunModel(nn.Module):
             return pred, h, embs
         return pred, h
 
-class ContrastModel(nn.Module):
+class ContrastAttnModel(nn.Module):
     def __init__(self, emb_size=512, out_size=2, *args, **kwargs):
         super().__init__()
         self.emb_size = emb_size
         self.out_size = out_size
-        self.attn = Attncoder(1, *args, emb_size=self.emb_size,
+        kwargs["n_layers"] = 1
+        self.attn = Attncoder(1, emb_size=self.emb_size,
                                  **kwargs,
                                  use_mask=False,
                                  init_decs=False,
                                  gen_decs=False)
-        self.classifier = nn.Sequential(
-                    nn.Linear(self.emb_size, self.emb_size),
-                    nn.ReLU(),
-                    nn.Linear(self.emb_size, self.out_size))
+        self.classifier = nn.Linear(self.emb_size, self.out_size)
+        #self.classifier = nn.Sequential(
+        #            nn.Linear(self.emb_size, self.emb_size),
+        #            nn.ReLU(),
+        #            nn.Linear(self.emb_size, self.out_size))
 
     def forward(self, x, y):
-        feats = self.attn(x,y) # (B,S,E)
+        """
+        x: torch float tensor (B,E)
+            the fwd preds
+        y: torch float tensor (B,E)
+            the fwd targs
+        """
+        x = x[:,None] # (B,1,E)
+        y = y[None].repeat((len(x),1,1)) # (B,B,E)
+        feats = self.attn(y,x) # (B,B,E)
         shape = feats.shape
-        outs = self.classifier(feats.reshape(-1,self.emb_size)) #(B*S,O)
-        return outs.reshape(*shape[:-1], self.out_size) # (B,S,O)
+        outs = self.classifier(feats.reshape(-1,self.emb_size)) #(B*B,O)
+        return outs.reshape(*shape[:-1], self.out_size) # (B,B,O)
+
+class SimpleContrast(nn.Module):
+    def __init__(self, emb_size, n_heads=8, attn_size=64, **kwargs):
+        """
+        emb_size: int
+        n_heads: int
+        attn_size: int
+        """
+        super().__init__()
+        self.emb_size = emb_size
+        self.n_heads = n_heads
+        self.attn_size = attn_size
+
+        xavier_scale = np.sqrt((emb_size + attn_size*n_heads)/2)
+        attnhead = self.attn_size*n_heads
+        w_q = torch.randn(emb_size, attnhead)/xavier_scale
+        self.w_q = nn.Parameter(w_q)
+        w_k = torch.randn(emb_size, attnhead)/xavier_scale
+        self.w_k = nn.Parameter(w_k)
+
+        self.outs = nn.Linear(attn_size*n_heads, emb_size)
+
+    def forward(self, q, k):
+        """
+        x: float tensor (B,E)
+            the forward predictions
+        y: float tensor (B,E)
+            the forward targets
+        """
+        fq = torch.matmul(q, self.w_q) # (B, H*A)
+        fk = torch.matmul(k, self.w_k) # (B, H*A)
+
+        bsize = len(fq)
+        fq = fq.reshape(bsize,self.n_heads,self.attn_size) # (B, H, A)
+        fq = fq.permute((1,0,2)) # (H,B,A)
+        fk = fk.reshape(bsize,self.n_heads,self.attn_size)
+        fk = fk.permute((1,2,0)) # (H,A,B)
+
+        f = torch.matmul(fq,fk)/float(np.sqrt(self.attn_size))
+        ps = F.softmax(f.mean(0),dim=-1)
+        return ps
+
