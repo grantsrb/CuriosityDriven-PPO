@@ -6,6 +6,7 @@ import torch.nn.functional as F
 import numpy as np
 import copy
 from utils import one_hot_encode
+from models.embedder import ContrastAttnModel, SimpleContrast
 
 def cuda_if(obj):
     if torch.cuda.is_available():
@@ -152,26 +153,32 @@ class Updater():
                 fwd_targs = self.fwd_embedder(next_states, temp_hs)
                 if self.hyps['contrast_rews']:
                     del temp_hs
-                    #bsize = 64
-                    #contrasts = []
-                    #bsize = 
-                    #n_loops = len(fwd_preds)//bsize
-                    #perm = torch.randperm(len(fwd_preds)).long()
-                    #for i in range(n_loops):
-                    #    idxs = perm[i*bsize:(i+1)*bsize]
-                    #    targs = fwd_targs[idxs][None].repeat((bsize,1,1))# (B,B,E)
-                    #    preds = fwd_preds[idxs][:,None]
-                    #    contr = self.contr_net(targs,
-                    #                            fwd_preds.data) # (B,B,2)
-                    #    contrasts.append(contr)
-                    #contrasts = torch.vstack(contrasts)
-                    #contrasts = contrasts.reshape(-1,contrasts.shape[-1])
-                    #labels = torch.diag(torch.ones(bsize)).long().reshape(-1)
-                    #rewards = F.cross_entropy(contrasts,cuda_if(labels),
-                    #                          reduction="none")
-                    #rewards = rewards.reshape(bsize,bsize).mean(-1)
+                    bsize = self.hyps['batch_size']
+                    rewards = torch.zeros(len(fwd_preds)).float()
+                    perm = torch.randperm(len(fwd_preds)).long()
+                    if isinstance(self.contr_net, ContrastAttnModel):
+                        labels = torch.diag(torch.ones(bsize)).long()
+                        labels = cuda_if(labels.reshape(-1))
+                    else:
+                        labels = cuda_if(torch.arange(bsize).long())
+                    for i in range(0,len(fwd_preds),bsize):
+                        idxs = perm[i:i+bsize]
+                        targs = fwd_targs[idxs] # (B,E)
+                        preds = fwd_preds[idxs] # (B,E)
+                        contr = self.contr_net(targs,
+                                               fwd_preds.data) # (B,B,2)
+                        if len(contr.shape) > 2:
+                            contr = contr.reshape(-1, contr.shape[-1])
+                            rews = F.cross_entropy(contr, labels,
+                                                   reduction="none")
+                            rews = rews.reshape(bsize,bsize).mean(-1)
+                        else:
+                            rews = F.cross_entropy(contr, labels,
+                                                        reduction="none")
+                        rewards[idxs] = rews.data
                 else:
-                    rewards = F.mse_loss(fwd_preds, fwd_targs, reduction="none")
+                    rewards = F.mse_loss(fwd_preds, fwd_targs,
+                                                    reduction="none")
                     rewards = rewards.view(len(fwd_preds),-1).mean(-1).data
                 del fwd_targs
             del fwd_preds
