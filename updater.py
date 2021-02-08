@@ -154,7 +154,7 @@ class Updater():
                 if self.hyps['contrast_rews']:
                     del temp_hs
                     bsize = self.hyps['batch_size']
-                    rewards = torch.zeros(len(fwd_preds)).float()
+                    rewards = cuda_if(torch.zeros(len(fwd_preds)).float())
                     perm = torch.randperm(len(fwd_preds)).long()
                     if isinstance(self.contr_net, ContrastAttnModel):
                         labels = torch.diag(torch.ones(bsize)).long()
@@ -165,8 +165,7 @@ class Updater():
                         idxs = perm[i:i+bsize]
                         targs = fwd_targs[idxs] # (B,E)
                         preds = fwd_preds[idxs] # (B,E)
-                        contr = self.contr_net(targs,
-                                               fwd_preds.data) # (B,B,2)
+                        contr = self.contr_net(targs, preds.data)
                         if len(contr.shape) > 2:
                             contr = contr.reshape(-1, contr.shape[-1])
                             rews = F.cross_entropy(contr, labels,
@@ -174,7 +173,7 @@ class Updater():
                             rews = rews.reshape(bsize,bsize).mean(-1)
                         else:
                             rews = F.cross_entropy(contr, labels,
-                                                        reduction="none")
+                                                   reduction="none")
                         rewards[idxs] = rews.data
                 else:
                     rewards = F.mse_loss(fwd_preds, fwd_targs,
@@ -458,7 +457,7 @@ class Updater():
         # Contrastive Loss
         if self.hyps['contrast']:
             bsize = len(fwd_preds)
-            contrasts = self.contr_net(fwd_preds, fwd_targs.data) # (B,B,2)
+            contrasts = self.contr_net(fwd_preds, fwd_targs.data)
             if len(contrasts.shape) > 2:
                 contrasts = contrasts.reshape(-1,contrasts.shape[-1])
                 labels = torch.diag(torch.ones(bsize)).long().reshape(-1)
